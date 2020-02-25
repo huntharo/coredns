@@ -40,10 +40,10 @@ cache [TTL] [ZONES...] {
 
 * **TTL**  and **ZONES** as above.
 * `success`, override the settings for caching successful responses. **CAPACITY** indicates the maximum
-  number of packets we cache before we start evicting (*randomly*). **TTL** overrides the cache maximum TTL.
+  number of packets we cache. **TTL** overrides the cache maximum TTL.
   **MINTTL** overrides the cache minimum TTL (default 5), which can be useful to limit queries to the backend.
 * `denial`, override the settings for caching denial of existence responses. **CAPACITY** indicates the maximum
-  number of packets we cache before we start evicting (LRU). **TTL** overrides the cache maximum TTL.
+  number of packets we cache. **TTL** overrides the cache maximum TTL.
   **MINTTL** overrides the cache minimum TTL (default 5), which can be useful to limit queries to the backend.
   There is a third category (`error`) but those responses are never cached.
 * `prefetch` will prefetch popular items when they are about to be expunged from the cache.
@@ -55,8 +55,15 @@ cache [TTL] [ZONES...] {
   available.  When this happens, cache will attempt to refresh the cache entry after sending the expired cache
   entry to the client. The responses have a TTL of 0. **DURATION** is how far back to consider
   stale responses as fresh. The default duration is 1h.
+* `ristretto` will use the `ristretto` cache library instead of the builtin cache library; the builtin cache
+  library is the default. The builtin cache evicts randomly and admits all items.  Ristretto evicts by LFU
+  (least frequently used) and only admits new items (when eviction required) that meet required criteria.
 
 ## Capacity and Eviction
+
+### Builtin Cache
+
+The builtin cache is the default and is used unless `ristretto` is specified in the cache config block.
 
 If **CAPACITY** _is not_ specified, the default cache size is 9984 per cache. The minimum allowed cache size is 1024.
 If **CAPACITY** _is_ specified, the actual cache size used will be rounded down to the nearest number divisible by 256 (so all shards are equal in size).
@@ -65,6 +72,23 @@ Eviction is done per shard. In effect, when a shard reaches capacity, items are 
 Since shards don't fill up perfectly evenly, evictions will occur before the entire cache reaches full capacity.
 Each shard capacity is equal to the total cache size / number of shards (256). Eviction is random, not TTL based.
 Entries with 0 TTL will remain in the cache until randomly evicted when the shard reaches capacity.
+
+Note that eviction in the builtin cache is *random*.
+
+### Ristretto
+
+The `ristretto` cache is used if `ristretto` is specified in the cache config block.  The `ristretto` cache excels
+at admitting and retaining items that are being frequently accessed while the cache is full and numerous non-cached
+names are being requested infrequently.  `ristretto` allows lossyness of new items being admitted; this is required
+to obtain the benefit of batching admissions and avoiding the caller having to wait for the write lock to be
+obtained.
+
+If **CAPACITY** _is not_ specified, the default cache size is 9984 per cache. The minimum allowed cache size is 1024.
+
+Admission to the LFU cache and eviction from the cache are performed as specified in the cache documentation:
+
+https://blog.dgraph.io/post/introducing-ristretto-high-perf-go-cache/
+
 
 ## Metrics
 
