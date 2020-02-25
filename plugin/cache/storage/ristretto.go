@@ -45,11 +45,9 @@ func NewStorageRistretto(size int) Storage {
 
 // Construct a hash string (do not actually hash)
 func (s storageRistretto) Hash(qname string, qtype uint16, do bool) *StorageHash {
-	doC := ""
+	doI := 0
 	if do {
-		doC = "1"
-	} else {
-		doC = "0"
+		doI = 1
 	}
 
 	storageHash := new(StorageHash)
@@ -57,7 +55,7 @@ func (s storageRistretto) Hash(qname string, qtype uint16, do bool) *StorageHash
 	storageHash.qtype = qtype
 	storageHash.do = do
 	storageHash.uhash = 0
-	storageHash.strhash = fmt.Sprintf("%s-%d-%d", qname, qtype, doC)
+	storageHash.strhash = fmt.Sprintf("%s-%d-%d", qname, qtype, doI)
 	return storageHash
 }
 
