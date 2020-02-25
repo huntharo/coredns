@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/coredns/coredns/plugin"
+	"github.com/coredns/coredns/plugin/cache/storage"
 	"github.com/coredns/coredns/plugin/pkg/dnstest"
 	"github.com/coredns/coredns/plugin/pkg/response"
 	"github.com/coredns/coredns/plugin/test"
@@ -174,10 +175,17 @@ func cacheMsg(m *dns.Msg, tc cacheTestCase) *dns.Msg {
 	return m
 }
 
-func newTestCache(ttl time.Duration) (*Cache, *ResponseWriter) {
+func newTestCache(ttl time.Duration, cacheType string) (*Cache, *ResponseWriter) {
 	c := New()
 	c.pttl = ttl
 	c.nttl = ttl
+
+	// Overwrite the default buitin cache objects
+	if cacheType == "ristretto" {
+		c.ristretto = true
+		c.pcache = storage.NewStorageRistretto(c.pcap)
+		c.ncache = storage.NewStorageRistretto(c.ncap)
+	}
 
 	crr := &ResponseWriter{ResponseWriter: nil, Cache: c}
 	return c, crr
@@ -187,45 +195,49 @@ func TestCache(t *testing.T) {
 	now, _ := time.Parse(time.UnixDate, "Fri Apr 21 10:51:21 BST 2017")
 	utc := now.UTC()
 
-	c, crr := newTestCache(maxTTL)
+	cacheTypes := []string{"", "ristretto"}
 
-	for _, tc := range cacheTestCases {
-		m := tc.in.Msg()
-		m = cacheMsg(m, tc)
+	for _, cacheType := range cacheTypes {
+		c, crr := newTestCache(maxTTL, cacheType)
 
-		state := request.Request{W: &test.ResponseWriter{}, Req: m}
+		for _, tc := range cacheTestCases {
+			m := tc.in.Msg()
+			m = cacheMsg(m, tc)
 
-		mt, _ := response.Typify(m, utc)
-		valid, k := key(state.Name(), m, mt, state.Do())
+			state := request.Request{W: &test.ResponseWriter{}, Req: m}
 
-		if valid {
-			crr.set(m, k, mt, c.pttl)
-		}
+			mt, _ := response.Typify(m, utc)
+			valid, k := key(state.Name(), m, mt, state.Do(), c.pcache)
 
-		i, _ := c.get(time.Now().UTC(), state, "dns://:53")
-		ok := i != nil
+			if valid {
+				crr.set(m, k, mt, c.pttl)
+			}
 
-		if ok != tc.shouldCache {
-			t.Errorf("Cached message that should not have been cached: %s", state.Name())
-			continue
-		}
+			i, _ := c.get(time.Now().UTC(), state, "dns://:53")
+			ok := i != nil
 
-		if ok {
-			resp := i.toMsg(m, time.Now().UTC())
-
-			if err := test.Header(tc.Case, resp); err != nil {
-				t.Error(err)
+			if ok != tc.shouldCache {
+				t.Errorf("Cached message that should not have been cached: %s", state.Name())
 				continue
 			}
 
-			if err := test.Section(tc.Case, test.Answer, resp.Answer); err != nil {
-				t.Error(err)
-			}
-			if err := test.Section(tc.Case, test.Ns, resp.Ns); err != nil {
-				t.Error(err)
-			}
-			if err := test.Section(tc.Case, test.Extra, resp.Extra); err != nil {
-				t.Error(err)
+			if ok {
+				resp := i.toMsg(m, time.Now().UTC())
+
+				if err := test.Header(tc.Case, resp); err != nil {
+					t.Error(err)
+					continue
+				}
+
+				if err := test.Section(tc.Case, test.Answer, resp.Answer); err != nil {
+					t.Error(err)
+				}
+				if err := test.Section(tc.Case, test.Ns, resp.Ns); err != nil {
+					t.Error(err)
+				}
+				if err := test.Section(tc.Case, test.Extra, resp.Extra); err != nil {
+					t.Error(err)
+				}
 			}
 		}
 	}
