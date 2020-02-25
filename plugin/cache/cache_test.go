@@ -227,12 +227,21 @@ func TestCache(t *testing.T) {
 			}
 
 			i, _ := c.get(time.Now().UTC(), state, "dns://:53")
+
+			if cacheType == "ristretto" {
+				// Kludge: the cache has a batched update, so we have to wait for that and
+				// we have to request the name more than once
+				time.Sleep(time.Duration(50) * time.Millisecond)
+
+				i, _ = c.get(time.Now().UTC(), state, "dns://:53")
+			}
+
 			ok := i != nil
 
-			if tc.shouldCache && ok != tc.shouldCache {
+			if !tc.shouldCache && ok {
 				t.Errorf("Cached message that should not have been cached: %s %s", state.Name(), cacheType)
 				continue
-			} else if !tc.shouldCache && ok != tc.shouldCache {
+			} else if tc.shouldCache && !ok {
 				t.Errorf("Non-cached message when expected to be cached: %s %s", state.Name(), cacheType)
 				continue
 			}
@@ -293,6 +302,15 @@ func TestServeFromStaleCache(t *testing.T) {
 		rec := dnstest.NewRecorder(&test.ResponseWriter{})
 		c.staleUpTo = 1 * time.Hour
 		c.ServeDNS(ctx, rec, req)
+
+		if cacheType == "ristretto" {
+			// Kludge: the cache has a batched update, so we have to wait for that and
+			// we have to request the name more than once
+			time.Sleep(time.Duration(50) * time.Millisecond)
+
+			c.ServeDNS(ctx, rec, req)
+		}
+
 		if c.pcache.Len() != 1 {
 			t.Fatalf("Msg with > 0 TTL should have been cached %s", cacheType)
 		}
