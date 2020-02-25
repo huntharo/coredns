@@ -25,6 +25,8 @@ type cacheTestCase struct {
 	shouldCache        bool
 }
 
+var cacheTypes = []string{"", "ristretto"}
+
 var cacheTestCases = []cacheTestCase{
 	{
 		RecursionAvailable: true, AuthenticatedData: true,
@@ -175,6 +177,19 @@ func cacheMsg(m *dns.Msg, tc cacheTestCase) *dns.Msg {
 	return m
 }
 
+func newTestCacheOnly(cacheType string) *Cache {
+	c := New()
+
+	// Overwrite the default buitin cache objects
+	if cacheType == "ristretto" {
+		c.ristretto = true
+		c.pcache = storage.NewStorageRistretto(c.pcap)
+		c.ncache = storage.NewStorageRistretto(c.ncap)
+	}
+
+	return c
+}
+
 func newTestCache(ttl time.Duration, cacheType string) (*Cache, *ResponseWriter) {
 	c := New()
 	c.pttl = ttl
@@ -194,8 +209,6 @@ func newTestCache(ttl time.Duration, cacheType string) (*Cache, *ResponseWriter)
 func TestCache(t *testing.T) {
 	now, _ := time.Parse(time.UnixDate, "Fri Apr 21 10:51:21 BST 2017")
 	utc := now.UTC()
-
-	cacheTypes := []string{"", "ristretto"}
 
 	for _, cacheType := range cacheTypes {
 		c, crr := newTestCache(maxTTL, cacheType)
@@ -217,7 +230,7 @@ func TestCache(t *testing.T) {
 			ok := i != nil
 
 			if ok != tc.shouldCache {
-				t.Errorf("Cached message that should not have been cached: %s", state.Name())
+				t.Errorf("Cached message that should not have been cached: %s %s", state.Name(), cacheType)
 				continue
 			}
 
@@ -244,90 +257,97 @@ func TestCache(t *testing.T) {
 }
 
 func TestCacheZeroTTL(t *testing.T) {
-	c := New()
-	c.minpttl = 0
-	c.minnttl = 0
-	c.Next = ttlBackend(0)
+	for _, cacheType := range cacheTypes {
+		c := newTestCacheOnly(cacheType)
+		c.minpttl = 0
+		c.minnttl = 0
+		c.Next = ttlBackend(0)
 
-	req := new(dns.Msg)
-	req.SetQuestion("example.org.", dns.TypeA)
-	ctx := context.TODO()
+		req := new(dns.Msg)
+		req.SetQuestion("example.org.", dns.TypeA)
+		ctx := context.TODO()
 
-	c.ServeDNS(ctx, &test.ResponseWriter{}, req)
-	if c.pcache.Len() != 0 {
-		t.Errorf("Msg with 0 TTL should not have been cached")
-	}
-	if c.ncache.Len() != 0 {
-		t.Errorf("Msg with 0 TTL should not have been cached")
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		if c.pcache.Len() != 0 {
+			t.Errorf("Msg with 0 TTL should not have been cached %s", cacheType)
+		}
+		if c.ncache.Len() != 0 {
+			t.Errorf("Msg with 0 TTL should not have been cached %s", cacheType)
+		}
 	}
 }
 
 func TestServeFromStaleCache(t *testing.T) {
-	c := New()
-	c.Next = ttlBackend(60)
+	for _, cacheType := range cacheTypes {
+		c := newTestCacheOnly(cacheType)
+		c.Next = ttlBackend(60)
 
-	req := new(dns.Msg)
-	req.SetQuestion("cached.org.", dns.TypeA)
-	ctx := context.TODO()
+		req := new(dns.Msg)
+		req.SetQuestion("cached.org.", dns.TypeA)
+		ctx := context.TODO()
 
-	// Cache example.org.
-	rec := dnstest.NewRecorder(&test.ResponseWriter{})
-	c.staleUpTo = 1 * time.Hour
-	c.ServeDNS(ctx, rec, req)
-	if c.pcache.Len() != 1 {
-		t.Fatalf("Msg with > 0 TTL should have been cached")
-	}
-
-	// No more backend resolutions, just from cache if available.
-	c.Next = plugin.HandlerFunc(func(context.Context, dns.ResponseWriter, *dns.Msg) (int, error) {
-		return 255, nil // Below, a 255 means we tried querying upstream.
-	})
-
-	tests := []struct {
-		name           string
-		futureMinutes  int
-		expectedResult int
-	}{
-		{"cached.org.", 30, 0},
-		{"cached.org.", 60, 0},
-		{"cached.org.", 70, 255},
-
-		{"notcached.org.", 30, 255},
-		{"notcached.org.", 60, 255},
-		{"notcached.org.", 70, 255},
-	}
-
-	for i, tt := range tests {
+		// Cache example.org.
 		rec := dnstest.NewRecorder(&test.ResponseWriter{})
-		c.now = func() time.Time { return time.Now().Add(time.Duration(tt.futureMinutes) * time.Minute) }
-		r := req.Copy()
-		r.SetQuestion(tt.name, dns.TypeA)
-		if ret, _ := c.ServeDNS(ctx, rec, r); ret != tt.expectedResult {
-			t.Errorf("Test %d: expecting %v; got %v", i, tt.expectedResult, ret)
+		c.staleUpTo = 1 * time.Hour
+		c.ServeDNS(ctx, rec, req)
+		if c.pcache.Len() != 1 {
+			t.Fatalf("Msg with > 0 TTL should have been cached %s", cacheType)
+		}
+
+		// No more backend resolutions, just from cache if available.
+		c.Next = plugin.HandlerFunc(func(context.Context, dns.ResponseWriter, *dns.Msg) (int, error) {
+			return 255, nil // Below, a 255 means we tried querying upstream.
+		})
+
+		tests := []struct {
+			name           string
+			futureMinutes  int
+			expectedResult int
+		}{
+			{"cached.org.", 30, 0},
+			{"cached.org.", 60, 0},
+			{"cached.org.", 70, 255},
+
+			{"notcached.org.", 30, 255},
+			{"notcached.org.", 60, 255},
+			{"notcached.org.", 70, 255},
+		}
+
+		for i, tt := range tests {
+			rec := dnstest.NewRecorder(&test.ResponseWriter{})
+			c.now = func() time.Time { return time.Now().Add(time.Duration(tt.futureMinutes) * time.Minute) }
+			r := req.Copy()
+			r.SetQuestion(tt.name, dns.TypeA)
+			if ret, _ := c.ServeDNS(ctx, rec, r); ret != tt.expectedResult {
+				t.Errorf("Test %d: expecting %v; got %v %s", i, tt.expectedResult, ret, cacheType)
+			}
 		}
 	}
 }
 
 func BenchmarkCacheResponse(b *testing.B) {
-	c := New()
-	c.prefetch = 1
-	c.Next = BackendHandler()
+	for _, cacheType := range cacheTypes {
+		c := newTestCacheOnly(cacheType)
 
-	ctx := context.TODO()
+		c.prefetch = 1
+		c.Next = BackendHandler()
 
-	reqs := make([]*dns.Msg, 5)
-	for i, q := range []string{"example1", "example2", "a", "b", "ddd"} {
-		reqs[i] = new(dns.Msg)
-		reqs[i].SetQuestion(q+".example.org.", dns.TypeA)
-	}
+		ctx := context.TODO()
 
-	b.StartTimer()
+		reqs := make([]*dns.Msg, 5)
+		for i, q := range []string{"example1", "example2", "a", "b", "ddd"} {
+			reqs[i] = new(dns.Msg)
+			reqs[i].SetQuestion(q+".example.org.", dns.TypeA)
+		}
 
-	j := 0
-	for i := 0; i < b.N; i++ {
-		req := reqs[j]
-		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
-		j = (j + 1) % 5
+		b.StartTimer()
+
+		j := 0
+		for i := 0; i < b.N; i++ {
+			req := reqs[j]
+			c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+			j = (j + 1) % 5
+		}
 	}
 }
 
