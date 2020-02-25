@@ -10,7 +10,7 @@ type storageInternal struct {
 	cache *cache.Cache
 }
 
-// Create a new cache using the internal cache package
+// NewStorageInternal creates a new cache using the internal cache package
 func NewStorageInternal(size int) Storage {
 	storage := new(storageInternal)
 	storage.cache = cache.New(size)

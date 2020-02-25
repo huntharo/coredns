@@ -24,7 +24,7 @@ type storageRistretto struct {
 	cache *ristretto.Cache
 }
 
-// Create a new Ristretto cache
+// NewStorageRistretto creates a new Ristretto cache
 func NewStorageRistretto(size int) Storage {
 	storage := new(storageRistretto)
 
