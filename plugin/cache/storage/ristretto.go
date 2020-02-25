@@ -20,12 +20,13 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-type StorageRistretto struct {
+type storageRistretto struct {
 	cache *ristretto.Cache
 }
 
+// Create a new Ristretto cache
 func NewStorageRistretto(size int) Storage {
-	storage := new(StorageRistretto)
+	storage := new(storageRistretto)
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters: int64(10 * size), // suggestion is 10x max stored items
@@ -42,7 +43,8 @@ func NewStorageRistretto(size int) Storage {
 	return storage
 }
 
-func (s StorageRistretto) Hash(qname string, qtype uint16, do bool) *StorageHash {
+// Construct a hash string (do not actually hash)
+func (s storageRistretto) Hash(qname string, qtype uint16, do bool) *StorageHash {
 	doC := ""
 	if do {
 		doC = "1"
@@ -59,19 +61,22 @@ func (s StorageRistretto) Hash(qname string, qtype uint16, do bool) *StorageHash
 	return storageHash
 }
 
-func (s StorageRistretto) Add(key *StorageHash, el interface{}) {
+// Add an item to the cache
+func (s storageRistretto) Add(key *StorageHash, el interface{}) {
 	s.cache.Set(key.strhash, el, 1)
 }
 
-func (s StorageRistretto) Get(key *StorageHash) (interface{}, bool) {
+// Attempt to get an item from the cache
+func (s storageRistretto) Get(key *StorageHash) (interface{}, bool) {
 	return s.cache.Get(key.strhash)
 }
 
-func (s StorageRistretto) Len() int {
+// Retrieve the current cache storage usage
+func (s storageRistretto) Len() int {
 	return 0
-	//return s.cache.Len
 }
 
-func (s StorageRistretto) Remove(key *StorageHash) {
+// Remove an item from the cache
+func (s storageRistretto) Remove(key *StorageHash) {
 	s.cache.Del(key.strhash)
 }

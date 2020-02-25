@@ -6,12 +6,13 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/cache"
 )
 
-type StorageInternal struct {
+type storageInternal struct {
 	cache *cache.Cache
 }
 
+// Create a new cache using the internal cache package
 func NewStorageInternal(size int) Storage {
-	storage := new(StorageInternal)
+	storage := new(storageInternal)
 	storage.cache = cache.New(size)
 	return storage
 }
@@ -19,8 +20,8 @@ func NewStorageInternal(size int) Storage {
 var one = []byte("1")
 var zero = []byte("0")
 
-func (s StorageInternal) Hash(qname string, qtype uint16, do bool) *StorageHash {
-
+// Hash key parameters using FNV to uint64
+func (s storageInternal) Hash(qname string, qtype uint16, do bool) *StorageHash {
 	h := fnv.New64()
 
 	if do {
@@ -43,18 +44,22 @@ func (s StorageInternal) Hash(qname string, qtype uint16, do bool) *StorageHash 
 	return storageHash
 }
 
-func (s StorageInternal) Add(key *StorageHash, el interface{}) {
+// Add an item to the cache
+func (s storageInternal) Add(key *StorageHash, el interface{}) {
 	s.cache.Add(key.uhash, el)
 }
 
-func (s StorageInternal) Get(key *StorageHash) (interface{}, bool) {
+// Attempt to get an item from the cache
+func (s storageInternal) Get(key *StorageHash) (interface{}, bool) {
 	return s.cache.Get(key.uhash)
 }
 
-func (s StorageInternal) Len() int {
+// Retrieve the current cache storage usage
+func (s storageInternal) Len() int {
 	return s.cache.Len()
 }
 
-func (s StorageInternal) Remove(key *StorageHash) {
+// Remove an item from the cache
+func (s storageInternal) Remove(key *StorageHash) {
 	s.cache.Remove(key.uhash)
 }
