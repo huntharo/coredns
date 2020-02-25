@@ -220,7 +220,7 @@ func TestCache(t *testing.T) {
 			state := request.Request{W: &test.ResponseWriter{}, Req: m}
 
 			mt, _ := response.Typify(m, utc)
-			valid, k := key(state.QName(), m, mt, state.Do(), c.pcache)
+			valid, k := key(state.Name(), m, mt, state.Do(), c.pcache)
 
 			if valid {
 				crr.set(m, k, mt, c.pttl)
@@ -229,8 +229,11 @@ func TestCache(t *testing.T) {
 			i, _ := c.get(time.Now().UTC(), state, "dns://:53")
 			ok := i != nil
 
-			if ok != tc.shouldCache {
+			if tc.shouldCache && ok != tc.shouldCache {
 				t.Errorf("Cached message that should not have been cached: %s %s", state.Name(), cacheType)
+				continue
+			} else if !tc.shouldCache && ok != tc.shouldCache {
+				t.Errorf("Non-cached message when expected to be cached: %s %s", state.Name(), cacheType)
 				continue
 			}
 

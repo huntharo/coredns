@@ -144,7 +144,7 @@ func (w *ResponseWriter) WriteMsg(res *dns.Msg) error {
 	}
 
 	// key returns empty string for anything we don't want to cache.
-	hasKey, key := key(w.state.QName(), res, mt, do, w.pcache)
+	hasKey, key := key(w.state.Name(), res, mt, do, w.pcache)
 
 	msgTTL := dnsutil.MinimalTTL(res, mt)
 	var duration time.Duration
