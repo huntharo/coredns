@@ -32,6 +32,7 @@ func NewStorageRistretto(size int) Storage {
 		NumCounters: int64(10 * size), // suggestion is 10x max stored items
 		MaxCost:     int64(size),      // maximum cost - using cost 1 per item
 		BufferItems: 64,               // number of keys per Get buffer
+		Metrics:     true,             // enable metrics as they are needed for tests
 	})
 
 	if err != nil {
@@ -71,7 +72,7 @@ func (s storageRistretto) Get(key *StorageHash) (interface{}, bool) {
 
 // Retrieve the current cache storage usage
 func (s storageRistretto) Len() int {
-	return 0
+	return int(s.cache.Metrics.KeysAdded())
 }
 
 // Remove an item from the cache

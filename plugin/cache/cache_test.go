@@ -220,7 +220,7 @@ func TestCache(t *testing.T) {
 			state := request.Request{W: &test.ResponseWriter{}, Req: m}
 
 			mt, _ := response.Typify(m, utc)
-			valid, k := key(state.Name(), m, mt, state.Do(), c.pcache)
+			valid, k := key(state.QName(), m, mt, state.Do(), c.pcache)
 
 			if valid {
 				crr.set(m, k, mt, c.pttl)
@@ -238,18 +238,18 @@ func TestCache(t *testing.T) {
 				resp := i.toMsg(m, time.Now().UTC())
 
 				if err := test.Header(tc.Case, resp); err != nil {
-					t.Error(err)
+					t.Errorf("Header mismatch: %s %s", err, cacheType)
 					continue
 				}
 
 				if err := test.Section(tc.Case, test.Answer, resp.Answer); err != nil {
-					t.Error(err)
+					t.Errorf("Answer mismatch: %s %s", err, cacheType)
 				}
 				if err := test.Section(tc.Case, test.Ns, resp.Ns); err != nil {
-					t.Error(err)
+					t.Errorf("NS mismatch: %s %s", err, cacheType)
 				}
 				if err := test.Section(tc.Case, test.Extra, resp.Extra); err != nil {
-					t.Error(err)
+					t.Errorf("Extra mismatch: %s %s", err, cacheType)
 				}
 			}
 		}
