@@ -2,12 +2,11 @@
 package cache
 
 import (
-	"hash/fnv"
 	"net"
 	"time"
 
 	"github.com/coredns/coredns/plugin"
-	"github.com/coredns/coredns/plugin/pkg/cache"
+	"github.com/coredns/coredns/plugin/cache/storage"
 	"github.com/coredns/coredns/plugin/pkg/dnsutil"
 	"github.com/coredns/coredns/plugin/pkg/response"
 	"github.com/coredns/coredns/request"
@@ -21,12 +20,12 @@ type Cache struct {
 	Next  plugin.Handler
 	Zones []string
 
-	ncache  *cache.Cache
+	ncache  storage.Storage
 	ncap    int
 	nttl    time.Duration
 	minnttl time.Duration
 
-	pcache  *cache.Cache
+	pcache  storage.Storage
 	pcap    int
 	pttl    time.Duration
 	minpttl time.Duration
@@ -38,6 +37,9 @@ type Cache struct {
 
 	staleUpTo time.Duration
 
+	// Use Ristretto backend.
+	ristretto bool
+
 	// Testing.
 	now func() time.Time
 }
@@ -48,16 +50,17 @@ func New() *Cache {
 	return &Cache{
 		Zones:      []string{"."},
 		pcap:       defaultCap,
-		pcache:     cache.New(defaultCap),
+		pcache:     storage.NewStorageInternal(defaultCap),
 		pttl:       maxTTL,
 		minpttl:    minTTL,
 		ncap:       defaultCap,
-		ncache:     cache.New(defaultCap),
+		ncache:     storage.NewStorageInternal(defaultCap),
 		nttl:       maxNTTL,
 		minnttl:    minNTTL,
 		prefetch:   0,
 		duration:   1 * time.Minute,
 		percentage: 10,
+		ristretto:  false,
 		now:        time.Now,
 	}
 }
@@ -65,35 +68,17 @@ func New() *Cache {
 // key returns key under which we store the item, -1 will be returned if we don't store the message.
 // Currently we do not cache Truncated, errors zone transfers or dynamic update messages.
 // qname holds the already lowercased qname.
-func key(qname string, m *dns.Msg, t response.Type, do bool) (bool, uint64) {
+func key(qname string, m *dns.Msg, t response.Type, do bool, c storage.Storage) (bool, *storage.StorageHash) {
 	// We don't store truncated responses.
 	if m.Truncated {
-		return false, 0
+		return false, nil
 	}
 	// Nor errors or Meta or Update
 	if t == response.OtherError || t == response.Meta || t == response.Update {
-		return false, 0
+		return false, nil
 	}
 
-	return true, hash(qname, m.Question[0].Qtype, do)
-}
-
-var one = []byte("1")
-var zero = []byte("0")
-
-func hash(qname string, qtype uint16, do bool) uint64 {
-	h := fnv.New64()
-
-	if do {
-		h.Write(one)
-	} else {
-		h.Write(zero)
-	}
-
-	h.Write([]byte{byte(qtype >> 8)})
-	h.Write([]byte{byte(qtype)})
-	h.Write([]byte(qname))
-	return h.Sum64()
+	return true, c.Hash(qname, m.Question[0].Qtype, do)
 }
 
 func computeTTL(msgTTL, minTTL, maxTTL time.Duration) time.Duration {
@@ -159,7 +144,7 @@ func (w *ResponseWriter) WriteMsg(res *dns.Msg) error {
 	}
 
 	// key returns empty string for anything we don't want to cache.
-	hasKey, key := key(w.state.Name(), res, mt, do)
+	hasKey, key := key(w.state.Name(), res, mt, do, w.pcache)
 
 	msgTTL := dnsutil.MinimalTTL(res, mt)
 	var duration time.Duration
@@ -203,7 +188,7 @@ func (w *ResponseWriter) WriteMsg(res *dns.Msg) error {
 	return w.ResponseWriter.WriteMsg(res)
 }
 
-func (w *ResponseWriter) set(m *dns.Msg, key uint64, mt response.Type, duration time.Duration) {
+func (w *ResponseWriter) set(m *dns.Msg, key *storage.StorageHash, mt response.Type, duration time.Duration) {
 	// duration is expected > 0
 	// and key is valid
 	switch mt {

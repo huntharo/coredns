@@ -8,8 +8,8 @@ import (
 
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
+	"github.com/coredns/coredns/plugin/cache/storage"
 	"github.com/coredns/coredns/plugin/metrics"
-	"github.com/coredns/coredns/plugin/pkg/cache"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 
 	"github.com/caddyserver/caddy"
@@ -193,6 +193,8 @@ func cacheParse(c *caddy.Controller) (*Cache, error) {
 					}
 					ca.staleUpTo = d
 				}
+			case "ristretto":
+				ca.ristretto = true
 			default:
 				return nil, c.ArgErr()
 			}
@@ -203,8 +205,13 @@ func cacheParse(c *caddy.Controller) (*Cache, error) {
 		}
 		ca.Zones = origins
 
-		ca.pcache = cache.New(ca.pcap)
-		ca.ncache = cache.New(ca.ncap)
+		if ca.ristretto {
+			ca.pcache = storage.NewStorageRistretto(ca.pcap)
+			ca.ncache = storage.NewStorageRistretto(ca.ncap)
+		} else {
+			ca.pcache = storage.NewStorageInternal(ca.pcap)
+			ca.ncache = storage.NewStorageInternal(ca.ncap)
+		}
 	}
 
 	return ca, nil
