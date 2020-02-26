@@ -160,6 +160,24 @@ var cacheTestCases = []cacheTestCase{
 		},
 		shouldCache: true,
 	},
+	{
+		RecursionAvailable: true, AuthenticatedData: true,
+		Case: test.Case{
+			Qname: "MIEK.nl.", Qtype: dns.TypeMX,
+			Answer: []dns.RR{
+				test.MX("MIEK.nl.	3600	IN	MX	1 aspmx.l.google.com."),
+				test.MX("MIEK.nl.	3600	IN	MX	10 aspmx2.googlemail.com."),
+			},
+		},
+		in: test.Case{
+			Qname: "miek.nl.", Qtype: dns.TypeMX,
+			Answer: []dns.RR{
+				test.MX("miek.nl.	3601	IN	MX	1 aspmx.l.google.com."),
+				test.MX("miek.nl.	3601	IN	MX	10 aspmx2.googlemail.com."),
+			},
+		},
+		shouldCache: true,
+	},
 }
 
 func cacheMsg(m *dns.Msg, tc cacheTestCase) *dns.Msg {
