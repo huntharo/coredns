@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/coredns/coredns/plugin"
+	"github.com/coredns/coredns/plugin/pkg/cache"
 	"github.com/coredns/coredns/plugin/pkg/dnstest"
 	"github.com/coredns/coredns/plugin/pkg/response"
 	"github.com/coredns/coredns/plugin/test"
@@ -296,7 +297,53 @@ func TestServeFromStaleCache(t *testing.T) {
 	}
 }
 
-func TestKeyCollisions(t *testing.T) {
+func TestKeyCollisions2(t *testing.T) {
+	const cachePopulation = 100000000
+	c := New()
+	c.pcap = cachePopulation
+	c.pcache = cache.New(defaultCap)
+	c.Next = BackendHandler()
+
+	ctx := context.TODO()
+
+	reqs := make([]*dns.Msg, cachePopulation)
+	for i := 0; i < cachePopulation; i++ {
+		reqs[i] = new(dns.Msg)
+		reqs[i].SetQuestion(fmt.Sprintf("%d.example.org.", i), dns.TypeA)
+	}
+
+	const parallelRoutines = 10
+	const perRoutine = cachePopulation / parallelRoutines
+	r := make([]chan int, parallelRoutines)
+	for p := 0; p < parallelRoutines; p++ {
+		r[p] = make(chan int)
+		// Startup the goroutines in parallel
+		go func(p int) {
+			defer close(r[p])
+			req := new(dns.Msg)
+			for i := p * perRoutine; i < (p+1)*perRoutine; i++ {
+				req.SetQuestion(fmt.Sprintf("%d.example.org.", i), dns.TypeA)
+				c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+			}
+			// Just write the parallel number (we don't care)
+			r[p] <- p
+		}(p)
+	}
+
+	// Wait for all the goroutines to stop
+	for p := 0; p < parallelRoutines; p++ {
+		_ = <-r[p]
+	}
+
+	// Check that the cache has length expected
+	if c.pcache.Len() != cachePopulation {
+		t.Errorf("Cache is not expected size, expected len %d, got len %d", cachePopulation, c.pcache.Len())
+	}
+
+	// TODO: Start asking for new names until we get a collision
+}
+
+func testKeyCollisions(t *testing.T) {
 	c := New()
 	c.Next = BackendHandler()
 
