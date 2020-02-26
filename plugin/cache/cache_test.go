@@ -503,20 +503,16 @@ func benchmarkParallelInsertsRead(b *testing.B, c *Cache) {
 	for i := 0; i < 5; i++ {
 		req := cachereqs[i]
 		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
-		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
-		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
-		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
-		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
 		time.Sleep(time.Duration(50) * time.Millisecond)
 		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
 	}
 
-	c.Next = BackendHandler(100)
+	c.Next = BackendHandler(5000)
 
 	b.StartTimer()
 
 	// Start writing random records from parallel goroutines
-	parallelRoutines := 2
+	parallelRoutines := 10
 	r := make([]chan int, parallelRoutines)
 	for p := 0; p < parallelRoutines; p++ {
 		r[p] = make(chan int)
