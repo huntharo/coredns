@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -297,22 +298,19 @@ func TestServeFromStaleCache(t *testing.T) {
 	}
 }
 
-func TestKeyCollisions2(t *testing.T) {
-	const cachePopulation = 100000000
+// TestKeyCollissionsMassive is normally disabled (as it takes up to 10 minutes to fail)
+// instead of attempting to run the normal 100 million tests that it would take to possibly
+// get a collision.
+func testKeyCollisionsMassive(t *testing.T) {
+	const cachePopulation = 10000000 / 256 * 256
 	c := New()
 	c.pcap = cachePopulation
-	c.pcache = cache.New(defaultCap)
+	c.pcache = cache.New(cachePopulation)
 	c.Next = BackendHandler()
 
 	ctx := context.TODO()
 
-	reqs := make([]*dns.Msg, cachePopulation)
-	for i := 0; i < cachePopulation; i++ {
-		reqs[i] = new(dns.Msg)
-		reqs[i].SetQuestion(fmt.Sprintf("%d.example.org.", i), dns.TypeA)
-	}
-
-	const parallelRoutines = 10
+	const parallelRoutines = 5
 	const perRoutine = cachePopulation / parallelRoutines
 	r := make([]chan int, parallelRoutines)
 	for p := 0; p < parallelRoutines; p++ {
@@ -321,6 +319,7 @@ func TestKeyCollisions2(t *testing.T) {
 		go func(p int) {
 			defer close(r[p])
 			req := new(dns.Msg)
+			// t.Logf("Routine %d from %d to %d", p, p*perRoutine, (p+1)*perRoutine)
 			for i := p * perRoutine; i < (p+1)*perRoutine; i++ {
 				req.SetQuestion(fmt.Sprintf("%d.example.org.", i), dns.TypeA)
 				c.ServeDNS(ctx, &test.ResponseWriter{}, req)
@@ -336,16 +335,58 @@ func TestKeyCollisions2(t *testing.T) {
 	}
 
 	// Check that the cache has length expected
-	if c.pcache.Len() != cachePopulation {
-		t.Errorf("Cache is not expected size, expected len %d, got len %d", cachePopulation, c.pcache.Len())
-	}
+	//	if c.pcache.Len() != cachePopulation {
+	//		t.Errorf("Cache is not expected size, expected len %d, got len %d", cachePopulation, c.pcache.Len())
+	//	}
 
 	// TODO: Start asking for new names until we get a collision
+	const testsPerLoop = 100000000
+	r = make([]chan int, parallelRoutines)
+	for p := 0; p < parallelRoutines; p++ {
+		r[p] = make(chan int)
+		// Startup the goroutines in parallel
+		go func(p int) {
+			defer close(r[p])
+
+			// Create a new random number generator for this routine
+			source := rand.NewSource(time.Now().UnixNano() * int64(p))
+			generator := rand.New(source)
+
+			// Record the answer so we can inspect it
+			rec := dnstest.NewRecorder(&test.ResponseWriter{})
+			req := new(dns.Msg)
+			for i := 0; i < testsPerLoop; i++ {
+				reqName := fmt.Sprintf("%d.example.org.", generator.Int63n(10000000000))
+				req.SetQuestion(reqName, dns.TypeA)
+				c.ServeDNS(ctx, rec, req)
+
+				// Check if the returned name matches the requested name
+				if rec.Msg.Answer[0].Header().Name != req.Question[0].Name {
+					t.Errorf("Requested name %s, got answer name %s", req.Question[0].Name, rec.Msg.Answer[0].Header().Name)
+				}
+			}
+			// Just write the parallel number (we don't care)
+			r[p] <- p
+		}(p)
+	}
+
+	// Wait for all the goroutines to stop
+	for p := 0; p < parallelRoutines; p++ {
+		_ = <-r[p]
+	}
 }
 
-func testKeyCollisions(t *testing.T) {
+// TestKeyCollisionsContrived will add a record to the cache where the Qname
+// does not match the Name on the headers in the response.
+// This simulates a key collision on retrieve because the operations are as follows:
+// 1. Question[0].Name is hashed (plus type + DO)
+// 2. Cache is checked for hash - Record is returned
+// 3. Record from cache is not checked to see if the answer names match the question name
+// Note: The question name is not stored in the cache so the original question name cannot
+// be checked to see if it matches the question name passed to the cache.
+func TestKeyCollisionsContrived(t *testing.T) {
 	c := New()
-	c.Next = BackendHandler()
+	c.Next = collisionBackend()
 
 	// Request name with lowercase to get it into the cache
 	req := new(dns.Msg)
@@ -362,15 +403,15 @@ func testKeyCollisions(t *testing.T) {
 	// Record the answer so we can inspect it
 	rec := dnstest.NewRecorder(&test.ResponseWriter{})
 
-	// Request name with upper case
-	const expectedName = "EXAMPLE.ORG."
+	// Request name again
+	const expectedName = "example.org."
 	req = new(dns.Msg)
 	req.SetQuestion(expectedName, dns.TypeA)
 	if ret, _ := c.ServeDNS(ctx, rec, req); ret == reachedBackendRet {
 		t.Error("Got backend response when cached response expected")
 	}
 
-	// Confirm headers have matching case name
+	// Confirm headers have a name matching the question name
 	for i := range rec.Msg.Answer {
 		if rec.Msg.Answer[i].Header().Name != expectedName {
 			t.Errorf("Answer %d should have a Header Name of %q, but has %q", i, expectedName, rec.Msg.Answer[i].Header().Name)
@@ -433,6 +474,20 @@ func ttlBackend(ttl int) plugin.Handler {
 		m.Response, m.RecursionAvailable = true, true
 
 		m.Answer = []dns.RR{test.A(fmt.Sprintf("example.org. %d IN A 127.0.0.53", ttl))}
+		w.WriteMsg(m)
+		return dns.RcodeSuccess, nil
+	})
+}
+
+func collisionBackend() plugin.Handler {
+	return plugin.HandlerFunc(func(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Response = true
+		m.RecursionAvailable = true
+
+		m.Answer = []dns.RR{test.A("collision.contrived." + " 303 IN A 127.0.0.53")}
+
 		w.WriteMsg(m)
 		return dns.RcodeSuccess, nil
 	})
