@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,8 +179,10 @@ func cacheMsg(m *dns.Msg, tc cacheTestCase) *dns.Msg {
 	return m
 }
 
-func newTestCacheOnly(cacheType string) *Cache {
+func newTestCacheOnly(cacheType string, cap int) *Cache {
 	c := New()
+	c.pcap = cap
+	c.ncap = cap
 
 	// Overwrite the default buitin cache objects
 	if cacheType == "ristretto" {
@@ -271,7 +274,7 @@ func TestCache(t *testing.T) {
 
 func TestCacheZeroTTL(t *testing.T) {
 	for _, cacheType := range cacheTypes {
-		c := newTestCacheOnly(cacheType)
+		c := newTestCacheOnly(cacheType, 1024)
 		c.minpttl = 0
 		c.minnttl = 0
 		c.Next = ttlBackend(0)
@@ -292,7 +295,7 @@ func TestCacheZeroTTL(t *testing.T) {
 
 func TestServeFromStaleCache(t *testing.T) {
 	for _, cacheType := range cacheTypes {
-		c := newTestCacheOnly(cacheType)
+		c := newTestCacheOnly(cacheType, 1024)
 		c.Next = ttlBackend(60)
 
 		req := new(dns.Msg)
@@ -312,7 +315,10 @@ func TestServeFromStaleCache(t *testing.T) {
 			c.ServeDNS(ctx, rec, req)
 		}
 
-		if c.pcache.Len() != 1 {
+		state := request.Request{W: &test.ResponseWriter{}, Req: req}
+		i, _ := c.get(time.Now().UTC(), state, "dns://:53")
+
+		if i == nil {
 			t.Fatalf("Msg with > 0 TTL should have been cached %s", cacheType)
 		}
 
@@ -349,7 +355,7 @@ func TestServeFromStaleCache(t *testing.T) {
 
 func benchmarkSimpleTest(b *testing.B, c *Cache) {
 	c.prefetch = 1
-	c.Next = BackendHandler()
+	c.Next = BackendHandler(0)
 
 	ctx := context.TODO()
 
@@ -370,18 +376,18 @@ func benchmarkSimpleTest(b *testing.B, c *Cache) {
 }
 
 func BenchmarkBuiltinCacheResponse(b *testing.B) {
-	c := newTestCacheOnly("")
+	c := newTestCacheOnly("", 1024)
 	benchmarkSimpleTest(b, c)
 }
 
 func BenchmarkRistrettoCacheResponse(b *testing.B) {
-	c := newTestCacheOnly("ristretto")
+	c := newTestCacheOnly("ristretto", 1024)
 	benchmarkSimpleTest(b, c)
 }
 
 func benchmarkInserts(b *testing.B, c *Cache) {
 	c.prefetch = 1
-	c.Next = BackendHandler()
+	c.Next = BackendHandler(0)
 
 	ctx := context.TODO()
 
@@ -406,18 +412,22 @@ func benchmarkInserts(b *testing.B, c *Cache) {
 }
 
 func BenchmarkBuiltinInserts(b *testing.B) {
-	c := newTestCacheOnly("")
+	c := newTestCacheOnly("", 10000)
 	benchmarkInserts(b, c)
 }
 
 func BenchmarkRistrettoInserts(b *testing.B) {
-	c := newTestCacheOnly("ristretto")
+	c := newTestCacheOnly("ristretto", 10000)
 	benchmarkInserts(b, c)
 }
 
+// benchmarkParallelInserts is testing the time to *only* insert records
+// into the cache from parallel goroutines.  For a Reader/Writer-lock
+// cache (such as the builtin cache) this will result in contention for the
+// write lock.
 func benchmarkParallelInserts(b *testing.B, c *Cache) {
 	c.prefetch = 1
-	c.Next = BackendHandler()
+	c.Next = BackendHandler(0)
 
 	ctx := context.TODO()
 
@@ -449,22 +459,109 @@ func benchmarkParallelInserts(b *testing.B, c *Cache) {
 		}(p)
 	}
 
+	// Wait for all the goroutines to stop
 	for p := 0; p < parallelRoutines; p++ {
 		_ = <-r[p]
 	}
 }
 
 func BenchmarkBuiltinParallelInserts(b *testing.B) {
-	c := newTestCacheOnly("")
+	c := newTestCacheOnly("", 10000)
 	benchmarkParallelInserts(b, c)
 }
 
 func BenchmarkRistrettoParallelInserts(b *testing.B) {
-	c := newTestCacheOnly("ristretto")
+	c := newTestCacheOnly("ristretto", 10000)
 	benchmarkParallelInserts(b, c)
 }
 
-func BackendHandler() plugin.Handler {
+// benchmarkParallelInsertsRead is testing the time to read
+// records that should stay cached while insert records in parallel.
+// We don't wait for the inserts to finish because they are not the
+// point in this test.  In this test we only want to see how fast
+// we can read records that should be cached when the cache
+// is also getting bombarded with writes.
+func benchmarkParallelInsertsRead(b *testing.B, c *Cache) {
+	c.prefetch = 1
+	c.Next = BackendHandler(0)
+
+	ctx := context.TODO()
+
+	uniqueReqCount := 10000
+	if uniqueReqCount > b.N {
+		uniqueReqCount = b.N
+	}
+	reqs := make([]*dns.Msg, uniqueReqCount)
+	for i := 0; i < uniqueReqCount; i++ {
+		reqs[i] = new(dns.Msg)
+		reqs[i].SetQuestion(fmt.Sprintf("%d.example.org.", i), dns.TypeA)
+	}
+
+	// Create the records that should stay cached
+	cachereqs := make([]*dns.Msg, 5)
+	for i, q := range []string{"example1", "example2", "a", "b", "ddd"} {
+		cachereqs[i] = new(dns.Msg)
+		cachereqs[i].SetQuestion(q+".example.slow.", dns.TypeA)
+	}
+	// Request the records twice so they are loaded into the cache
+	for i := 0; i < 5; i++ {
+		req := cachereqs[i]
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		time.Sleep(time.Duration(50) * time.Millisecond)
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+	}
+
+	c.Next = BackendHandler(100)
+
+	b.StartTimer()
+
+	// Start writing random records from parallel goroutines
+	parallelRoutines := 2
+	r := make([]chan int, parallelRoutines)
+	for p := 0; p < parallelRoutines; p++ {
+		r[p] = make(chan int)
+		// Startup the goroutines in parallel
+		go func(p int) {
+			defer close(r[p])
+			for i := 0; i < b.N/parallelRoutines; i++ {
+				req := reqs[rand.Intn(uniqueReqCount)]
+				c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+				//time.Sleep(time.Duration(5) * time.Millisecond)
+			}
+			// Just write the parallel number (we don't care)
+			r[p] <- p
+		}(p)
+	}
+
+	// Start the read of the records that should stay cached
+	j := 0
+	for i := 0; i < b.N; i++ {
+		req := cachereqs[j]
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		j = (j + 1) % 5
+	}
+
+	// Wait for all the goroutines to stop
+	for p := 0; p < parallelRoutines; p++ {
+		_ = <-r[p]
+	}
+}
+
+func BenchmarkBuiltinParallelInsertsRead(b *testing.B) {
+	c := newTestCacheOnly("", 10000)
+	benchmarkParallelInsertsRead(b, c)
+}
+
+func BenchmarkRistrettoParallelInsertsRead(b *testing.B) {
+	c := newTestCacheOnly("ristretto", 10000)
+	benchmarkParallelInsertsRead(b, c)
+}
+
+func BackendHandler(delayMS int) plugin.Handler {
 	return plugin.HandlerFunc(func(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
 		m := new(dns.Msg)
 		m.SetReply(r)
@@ -473,6 +570,13 @@ func BackendHandler() plugin.Handler {
 
 		owner := m.Question[0].Name
 		m.Answer = []dns.RR{test.A(owner + " 303 IN A 127.0.0.53")}
+
+		if strings.HasSuffix(owner, ".slow.") {
+			if delayMS != 0 {
+				// Only slow ".slow." when delay is enabled at all
+				time.Sleep(time.Duration(delayMS) * time.Millisecond)
+			}
+		}
 
 		w.WriteMsg(m)
 		return dns.RcodeSuccess, nil
