@@ -353,8 +353,7 @@ func TestServeFromStaleCache(t *testing.T) {
 	}
 }
 
-func benchmarkSimpleTest(b *testing.B, c *Cache) {
-	c.prefetch = 1
+func benchmarkCacheResponse(b *testing.B, c *Cache) {
 	c.Next = BackendHandler(0)
 
 	ctx := context.TODO()
@@ -377,16 +376,15 @@ func benchmarkSimpleTest(b *testing.B, c *Cache) {
 
 func BenchmarkBuiltinCacheResponse(b *testing.B) {
 	c := newTestCacheOnly("", 1024)
-	benchmarkSimpleTest(b, c)
+	benchmarkCacheResponse(b, c)
 }
 
 func BenchmarkRistrettoCacheResponse(b *testing.B) {
 	c := newTestCacheOnly("ristretto", 1024)
-	benchmarkSimpleTest(b, c)
+	benchmarkCacheResponse(b, c)
 }
 
 func benchmarkInserts(b *testing.B, c *Cache) {
-	c.prefetch = 1
 	c.Next = BackendHandler(0)
 
 	ctx := context.TODO()
@@ -426,7 +424,6 @@ func BenchmarkRistrettoInserts(b *testing.B) {
 // cache (such as the builtin cache) this will result in contention for the
 // write lock.
 func benchmarkParallelInserts(b *testing.B, c *Cache) {
-	c.prefetch = 1
 	c.Next = BackendHandler(0)
 
 	ctx := context.TODO()
@@ -482,7 +479,6 @@ func BenchmarkRistrettoParallelInserts(b *testing.B) {
 // we can read records that should be cached when the cache
 // is also getting bombarded with writes.
 func benchmarkParallelInsertsRead(b *testing.B, c *Cache) {
-	c.prefetch = 1
 	c.Next = BackendHandler(0)
 
 	ctx := context.TODO()
