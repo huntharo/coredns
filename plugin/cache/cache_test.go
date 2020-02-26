@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -346,30 +347,121 @@ func TestServeFromStaleCache(t *testing.T) {
 	}
 }
 
-func BenchmarkCacheResponse(b *testing.B) {
-	for _, cacheType := range cacheTypes {
-		c := newTestCacheOnly(cacheType)
+func benchmarkSimpleTest(b *testing.B, c *Cache) {
+	c.prefetch = 1
+	c.Next = BackendHandler()
 
-		c.prefetch = 1
-		c.Next = BackendHandler()
+	ctx := context.TODO()
 
-		ctx := context.TODO()
-
-		reqs := make([]*dns.Msg, 5)
-		for i, q := range []string{"example1", "example2", "a", "b", "ddd"} {
-			reqs[i] = new(dns.Msg)
-			reqs[i].SetQuestion(q+".example.org.", dns.TypeA)
-		}
-
-		b.StartTimer()
-
-		j := 0
-		for i := 0; i < b.N; i++ {
-			req := reqs[j]
-			c.ServeDNS(ctx, &test.ResponseWriter{}, req)
-			j = (j + 1) % 5
-		}
+	reqs := make([]*dns.Msg, 5)
+	for i, q := range []string{"example1", "example2", "a", "b", "ddd"} {
+		reqs[i] = new(dns.Msg)
+		reqs[i].SetQuestion(q+".example.org.", dns.TypeA)
 	}
+
+	b.StartTimer()
+
+	j := 0
+	for i := 0; i < b.N; i++ {
+		req := reqs[j]
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		j = (j + 1) % 5
+	}
+}
+
+func BenchmarkBuiltinCacheResponse(b *testing.B) {
+	c := newTestCacheOnly("")
+	benchmarkSimpleTest(b, c)
+}
+
+func BenchmarkRistrettoCacheResponse(b *testing.B) {
+	c := newTestCacheOnly("ristretto")
+	benchmarkSimpleTest(b, c)
+}
+
+func benchmarkInserts(b *testing.B, c *Cache) {
+	c.prefetch = 1
+	c.Next = BackendHandler()
+
+	ctx := context.TODO()
+
+	uniqueReqCount := 10000
+	if uniqueReqCount > b.N {
+		uniqueReqCount = b.N
+	}
+	reqs := make([]*dns.Msg, uniqueReqCount)
+	for i := 0; i < uniqueReqCount; i++ {
+		reqs[i] = new(dns.Msg)
+		reqs[i].SetQuestion(fmt.Sprintf("%d.example.org.", i), dns.TypeA)
+	}
+
+	b.StartTimer()
+
+	j := 0
+	for i := 0; i < b.N; i++ {
+		req := reqs[j]
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		j = (j + 1) % uniqueReqCount
+	}
+}
+
+func BenchmarkBuiltinInserts(b *testing.B) {
+	c := newTestCacheOnly("")
+	benchmarkInserts(b, c)
+}
+
+func BenchmarkRistrettoInserts(b *testing.B) {
+	c := newTestCacheOnly("ristretto")
+	benchmarkInserts(b, c)
+}
+
+func benchmarkParallelInserts(b *testing.B, c *Cache) {
+	c.prefetch = 1
+	c.Next = BackendHandler()
+
+	ctx := context.TODO()
+
+	uniqueReqCount := 500000
+	if uniqueReqCount > b.N {
+		uniqueReqCount = b.N
+	}
+	reqs := make([]*dns.Msg, uniqueReqCount)
+	for i := 0; i < uniqueReqCount; i++ {
+		reqs[i] = new(dns.Msg)
+		reqs[i].SetQuestion(fmt.Sprintf("%d.example.org.", i), dns.TypeA)
+	}
+
+	b.StartTimer()
+
+	parallelRoutines := 10
+	r := make([]chan int, parallelRoutines)
+	for p := 0; p < parallelRoutines; p++ {
+		r[p] = make(chan int)
+		// Startup the goroutines in parallel
+		go func(p int) {
+			defer close(r[p])
+			for i := 0; i < b.N/parallelRoutines; i++ {
+				req := reqs[rand.Intn(uniqueReqCount)]
+				c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+			}
+			// Just write the parallel number (we don't care)
+			r[p] <- p
+		}(p)
+	}
+
+	for p := 0; p < parallelRoutines; p++ {
+		_ = <-r[p]
+	}
+}
+
+func BenchmarkBuiltinParallelInserts(b *testing.B) {
+	c := newTestCacheOnly("")
+	benchmarkParallelInserts(b, c)
+}
+
+func BenchmarkRistrettoParallelInserts(b *testing.B) {
+	c := newTestCacheOnly("ristretto")
+	benchmarkParallelInserts(b, c)
 }
 
 func BackendHandler() plugin.Handler {
