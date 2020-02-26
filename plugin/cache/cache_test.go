@@ -296,6 +296,51 @@ func TestServeFromStaleCache(t *testing.T) {
 	}
 }
 
+func TestKeyCollisions(t *testing.T) {
+	c := New()
+	c.Next = BackendHandler()
+
+	// Request name with lowercase to get it into the cache
+	req := new(dns.Msg)
+	req.SetQuestion("example.org.", dns.TypeA)
+	ctx := context.TODO()
+	c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+
+	// Prevent new backend responses (we only want response from cache)
+	const reachedBackendRet = 255
+	c.Next = plugin.HandlerFunc(func(context.Context, dns.ResponseWriter, *dns.Msg) (int, error) {
+		return reachedBackendRet, nil // Below, a 255 means we tried querying upstream.
+	})
+
+	// Record the answer so we can inspect it
+	rec := dnstest.NewRecorder(&test.ResponseWriter{})
+
+	// Request name with upper case
+	const expectedName = "EXAMPLE.ORG."
+	req = new(dns.Msg)
+	req.SetQuestion(expectedName, dns.TypeA)
+	if ret, _ := c.ServeDNS(ctx, rec, req); ret == reachedBackendRet {
+		t.Error("Got backend response when cached response expected")
+	}
+
+	// Confirm headers have matching case name
+	for i := range rec.Msg.Answer {
+		if rec.Msg.Answer[i].Header().Name != expectedName {
+			t.Errorf("Answer %d should have a Header Name of %q, but has %q", i, expectedName, rec.Msg.Answer[i].Header().Name)
+		}
+	}
+	for i := range rec.Msg.Ns {
+		if rec.Msg.Ns[i].Header().Name != expectedName {
+			t.Errorf("Ns %d should have a Header Name of %q, but has %q", i, expectedName, rec.Msg.Answer[i].Header().Name)
+		}
+	}
+	for i := range rec.Msg.Extra {
+		if rec.Msg.Extra[i].Header().Name != expectedName {
+			t.Errorf("Ns %d should have a Header Name of %q, but has %q", i, expectedName, rec.Msg.Answer[i].Header().Name)
+		}
+	}
+}
+
 func BenchmarkCacheResponse(b *testing.B) {
 	c := New()
 	c.prefetch = 1
