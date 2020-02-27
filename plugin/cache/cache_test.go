@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -353,7 +354,7 @@ func TestServeFromStaleCache(t *testing.T) {
 	}
 }
 
-func benchmarkCacheResponse(b *testing.B, c *Cache) {
+func benchmarkReads(b *testing.B, c *Cache) {
 	c.Next = BackendHandler(0)
 
 	ctx := context.TODO()
@@ -374,14 +375,61 @@ func benchmarkCacheResponse(b *testing.B, c *Cache) {
 	}
 }
 
-func BenchmarkBuiltinCacheResponse(b *testing.B) {
+func BenchmarkBuiltinReads(b *testing.B) {
 	c := newTestCacheOnly("", 1024)
-	benchmarkCacheResponse(b, c)
+	benchmarkReads(b, c)
 }
 
-func BenchmarkRistrettoCacheResponse(b *testing.B) {
+func BenchmarkRistrettoReads(b *testing.B) {
 	c := newTestCacheOnly("ristretto", 1024)
-	benchmarkCacheResponse(b, c)
+	benchmarkReads(b, c)
+}
+
+func benchmarkParallelReads(b *testing.B, c *Cache) {
+	c.Next = BackendHandler(0)
+
+	ctx := context.TODO()
+
+	reqs := make([]*dns.Msg, 5)
+	for i, q := range []string{"example1", "example2", "a", "b", "ddd"} {
+		reqs[i] = new(dns.Msg)
+		reqs[i].SetQuestion(q+".example.org.", dns.TypeA)
+	}
+
+	b.StartTimer()
+
+	parallelRoutines := runtime.NumCPU() - 2
+	r := make([]chan int, parallelRoutines)
+	for p := 0; p < parallelRoutines; p++ {
+		r[p] = make(chan int)
+		// Startup the goroutines in parallel
+		go func(p int) {
+			defer close(r[p])
+			j := 0
+			for i := 0; i < b.N/parallelRoutines; i++ {
+				req := reqs[j]
+				c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+				j = (j + 1) % 5
+			}
+			// Just write the parallel number (we don't care)
+			r[p] <- p
+		}(p)
+	}
+
+	// Wait for all the goroutines to stop
+	for p := 0; p < parallelRoutines; p++ {
+		_ = <-r[p]
+	}
+}
+
+func BenchmarkBuiltinParallelReads(b *testing.B) {
+	c := newTestCacheOnly("", 1024)
+	benchmarkParallelReads(b, c)
+}
+
+func BenchmarkRistrettoParallelReads(b *testing.B) {
+	c := newTestCacheOnly("ristretto", 1024)
+	benchmarkParallelReads(b, c)
 }
 
 func benchmarkInserts(b *testing.B, c *Cache) {
@@ -440,7 +488,7 @@ func benchmarkParallelInserts(b *testing.B, c *Cache) {
 
 	b.StartTimer()
 
-	parallelRoutines := 10
+	parallelRoutines := runtime.NumCPU() - 2
 	r := make([]chan int, parallelRoutines)
 	for p := 0; p < parallelRoutines; p++ {
 		r[p] = make(chan int)
@@ -517,7 +565,7 @@ func benchmarkParallelInsertsRead(b *testing.B, c *Cache) {
 	b.StartTimer()
 
 	// Start writing random records from parallel goroutines
-	parallelRoutines := 10
+	parallelRoutines := runtime.NumCPU() - 2
 	r := make([]chan int, parallelRoutines)
 	for p := 0; p < parallelRoutines; p++ {
 		r[p] = make(chan int)
