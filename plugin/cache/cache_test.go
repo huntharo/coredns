@@ -376,12 +376,12 @@ func benchmarkReads(b *testing.B, c *Cache) {
 }
 
 func BenchmarkBuiltinReads(b *testing.B) {
-	c := newTestCacheOnly("", 1024)
+	c := newTestCacheOnly("", 10000)
 	benchmarkReads(b, c)
 }
 
 func BenchmarkRistrettoReads(b *testing.B) {
-	c := newTestCacheOnly("ristretto", 1024)
+	c := newTestCacheOnly("ristretto", 10000)
 	benchmarkReads(b, c)
 }
 
@@ -423,13 +423,101 @@ func benchmarkParallelReads(b *testing.B, c *Cache) {
 }
 
 func BenchmarkBuiltinParallelReads(b *testing.B) {
-	c := newTestCacheOnly("", 1024)
+	c := newTestCacheOnly("", 10000)
 	benchmarkParallelReads(b, c)
 }
 
 func BenchmarkRistrettoParallelReads(b *testing.B) {
-	c := newTestCacheOnly("ristretto", 1024)
+	c := newTestCacheOnly("ristretto", 10000)
 	benchmarkParallelReads(b, c)
+}
+
+// benchmarkParallelBalanced is testing:
+//  ~20% writes with 20 ms lookups
+//  ~80% reads
+func benchmarkParallelBalanced(b *testing.B, c *Cache) {
+	// Create a backend handler that takes 20 ms to respond to .slow. requests
+	c.Next = BackendHandler(0)
+
+	ctx := context.TODO()
+
+	// Create random record names to be requested below
+	uniqueReqCount := 50000
+	reqs := make([]*dns.Msg, uniqueReqCount)
+	for i := 0; i < uniqueReqCount; i++ {
+		reqs[i] = new(dns.Msg)
+		reqs[i].SetQuestion(fmt.Sprintf("%d.example.slow.", i), dns.TypeA)
+	}
+
+	// Create the records that should stay cached
+	cachereqs := make([]*dns.Msg, 5)
+	for i, q := range []string{"example1", "example2", "a", "b", "ddd"} {
+		cachereqs[i] = new(dns.Msg)
+		cachereqs[i].SetQuestion(q+".example.slow.", dns.TypeA)
+	}
+	// Request the records twice so they are loaded into the cache
+	for i := 0; i < 5; i++ {
+		req := cachereqs[i]
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		time.Sleep(time.Duration(50) * time.Millisecond)
+		c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+	}
+
+	// Create a backend handler that takes 20 ms to respond to .slow. requests
+	c.Next = BackendHandler(20)
+
+	b.StartTimer()
+
+	// Start parallel goroutines
+	parallelRoutines := runtime.NumCPU() - 2
+	r := make([]chan int, parallelRoutines)
+	for p := 0; p < parallelRoutines; p++ {
+		r[p] = make(chan int)
+		// Startup the goroutines in parallel
+		go func(p int) {
+			defer close(r[p])
+
+			// Create a new random number generator for this routine
+			source := rand.NewSource(time.Now().UnixNano() * int64(p))
+			generator := rand.New(source)
+
+			for i := 0; i < b.N/parallelRoutines; i++ {
+				if i%5 == 0 {
+					// Kick this off in a goroutine so we don't pause the read loop
+					go func() {
+						// 20% of the time
+						// Lookup and insert a random item into the cache
+						// The lookup will take 20ms
+						req := reqs[generator.Intn(uniqueReqCount)]
+						c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+					}()
+				} else {
+					// 80% of the time
+					// Lookup an item that should already be in the cache
+					// The cache lookup should take 0ms
+					req := cachereqs[generator.Intn(5)]
+					c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+				}
+			}
+			// Just write the parallel number (we don't care)
+			r[p] <- p
+		}(p)
+	}
+
+	// Wait for all the goroutines to stop
+	for p := 0; p < parallelRoutines; p++ {
+		_ = <-r[p]
+	}
+}
+
+func BenchmarkBuiltinBalanced(b *testing.B) {
+	c := newTestCacheOnly("", 10000)
+	benchmarkParallelBalanced(b, c)
+}
+
+func BenchmarkRistrettoBalanced(b *testing.B) {
+	c := newTestCacheOnly("ristretto", 10000)
+	benchmarkParallelBalanced(b, c)
 }
 
 func benchmarkInserts(b *testing.B, c *Cache) {
@@ -438,9 +526,6 @@ func benchmarkInserts(b *testing.B, c *Cache) {
 	ctx := context.TODO()
 
 	uniqueReqCount := 10000
-	if uniqueReqCount > b.N {
-		uniqueReqCount = b.N
-	}
 	reqs := make([]*dns.Msg, uniqueReqCount)
 	for i := 0; i < uniqueReqCount; i++ {
 		reqs[i] = new(dns.Msg)
@@ -477,9 +562,6 @@ func benchmarkParallelInserts(b *testing.B, c *Cache) {
 	ctx := context.TODO()
 
 	uniqueReqCount := 500000
-	if uniqueReqCount > b.N {
-		uniqueReqCount = b.N
-	}
 	reqs := make([]*dns.Msg, uniqueReqCount)
 	for i := 0; i < uniqueReqCount; i++ {
 		reqs[i] = new(dns.Msg)
@@ -537,9 +619,6 @@ func benchmarkParallelInsertsRead(b *testing.B, c *Cache) {
 	ctx := context.TODO()
 
 	uniqueReqCount := 10000
-	if uniqueReqCount > b.N {
-		uniqueReqCount = b.N
-	}
 	reqs := make([]*dns.Msg, uniqueReqCount)
 	for i := 0; i < uniqueReqCount; i++ {
 		reqs[i] = new(dns.Msg)
@@ -580,7 +659,6 @@ func benchmarkParallelInsertsRead(b *testing.B, c *Cache) {
 			for i := 0; i < b.N/parallelRoutines; i++ {
 				req := reqs[generator.Intn(uniqueReqCount)]
 				c.ServeDNS(ctx, &test.ResponseWriter{}, req)
-				//time.Sleep(time.Duration(5) * time.Millisecond)
 			}
 			// Just write the parallel number (we don't care)
 			r[p] <- p
