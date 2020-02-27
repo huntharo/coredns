@@ -22,19 +22,27 @@ import (
 )
 
 type storageRistretto struct {
-	cache *ristretto.Cache
-	size  int64
+	// Note: the int64 for atomic must be 8 byte aligned
+	// We achieve that by allocating it with new(int64)
+	// https://go101.org/article/concurrent-atomic-operation.html
+	// "Please note, up to now (Go 1.14), atomic operations for 64-bit words,
+	// a.k.a., int64 and uint64 values, require the 64-bit words must be 8-byte
+	// aligned in memory."
+	approxLength *int64
+	cache        *ristretto.Cache
 }
 
 // NewStorageRistretto creates a new Ristretto cache
 func NewStorageRistretto(size int) Storage {
 	storage := new(storageRistretto)
 
+	storage.approxLength = new(int64)
+
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters: int64(10 * size),           // suggestion is 10x max stored items
 		MaxCost:     int64(size),                // maximum cost - using cost 1 per item
 		BufferItems: 64,                         // number of keys per Get buffer
-		Metrics:     false,                      // enable metrics as they are needed for tests
+		Metrics:     true,                       // enable metrics as they are needed for tests
 		KeyToHash:   storage.ristrettoKeyToHash, // replace default hash with FNV since it's faster
 		Cost:        storage.ristrettoCost,      // track when items are stored
 		OnEvict:     storage.ristrettoOnEvict,   // track when items are evicted
@@ -66,13 +74,13 @@ func (s storageRistretto) ristrettoKeyToHash(key interface{}) (uint64, uint64) {
 // Decrement storage cost by 1
 // Called only on evict
 func (s storageRistretto) ristrettoOnEvict(key, conflict uint64, value interface{}, cost int64) {
-	atomic.AddInt64(&s.size, -1)
+	atomic.AddInt64(s.approxLength, -1)
 }
 
 // Increment storage cost by 1
 // Called only on set / store
 func (s storageRistretto) ristrettoCost(value interface{}) int64 {
-	atomic.AddInt64(&s.size, 1)
+	atomic.AddInt64(s.approxLength, 1)
 	return 1
 }
 
@@ -113,10 +121,12 @@ func (s storageRistretto) Get(key *StorageHash) (interface{}, bool) {
 // Note: this will be a lagging indicator
 // It will only update when items are admitted into the cache
 func (s storageRistretto) Len() int {
-	return int(atomic.LoadInt64(&s.size))
+	//return int(s.cache.Metrics.CostAdded())
+	return int(atomic.LoadInt64(s.approxLength))
 }
 
 // Remove an item from the cache
 func (s storageRistretto) Remove(key *StorageHash) {
 	s.cache.Del(key)
+	atomic.AddInt64(s.approxLength, -1)
 }

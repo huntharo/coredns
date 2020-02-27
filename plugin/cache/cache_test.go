@@ -323,6 +323,10 @@ func TestServeFromStaleCache(t *testing.T) {
 			t.Fatalf("Msg with > 0 TTL should have been cached %s", cacheType)
 		}
 
+		if c.pcache.Len() == 0 {
+			t.Fatalf("Cache length should not have been zero %s", cacheType)
+		}
+
 		// No more backend resolutions, just from cache if available.
 		c.Next = plugin.HandlerFunc(func(context.Context, dns.ResponseWriter, *dns.Msg) (int, error) {
 			return 255, nil // Below, a 255 means we tried querying upstream.
@@ -350,6 +354,31 @@ func TestServeFromStaleCache(t *testing.T) {
 			if ret, _ := c.ServeDNS(ctx, rec, r); ret != tt.expectedResult {
 				t.Errorf("Test %d: expecting %v; got %v %s", i, tt.expectedResult, ret, cacheType)
 			}
+		}
+	}
+}
+
+func TestLength(t *testing.T) {
+	for _, cacheType := range cacheTypes {
+		c := newTestCacheOnly(cacheType, 1024)
+		c.Next = BackendHandler(0)
+
+		ctx := context.TODO()
+
+		uniqueReqCount := 10000
+
+		for i := 0; i < uniqueReqCount; i++ {
+			req := new(dns.Msg)
+			qname := fmt.Sprintf("%d.example.org.", i)
+			req.SetQuestion(qname, dns.TypeA)
+
+			// Ask for the item - this should put it into the cache
+			c.ServeDNS(ctx, &test.ResponseWriter{}, req)
+		}
+
+		var len = c.pcache.Len()
+		if len == 0 {
+			t.Errorf("Cache reports length 0 when %d items were inserted %s", uniqueReqCount, cacheType)
 		}
 	}
 }
