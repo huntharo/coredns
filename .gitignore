@@ -16,3 +16,4 @@ coverage.txt
 build/
 release/
 vendor/
+.vscode/
