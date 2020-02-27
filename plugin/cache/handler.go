@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/coredns/coredns/plugin"
+	"github.com/coredns/coredns/plugin/cache/storage"
 	"github.com/coredns/coredns/plugin/metrics"
 	"github.com/coredns/coredns/request"
 
@@ -27,11 +28,16 @@ func (c *Cache) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) 
 	server := metrics.WithServer(ctx)
 
 	ttl := 0
-	i := c.getIgnoreTTL(now, state, server)
+	i, k := c.getIgnoreTTL(now, state, server)
 	if i != nil {
 		ttl = i.ttl(now)
 	}
 	if i == nil || -ttl >= int(c.staleUpTo.Seconds()) {
+		// Item not present or expired and serve_stale not enabled
+		if i != nil {
+			// Remove the expired item from the cache
+			c.remove(k)
+		}
 		crr := &ResponseWriter{ResponseWriter: w, Cache: c, state: state, server: server}
 		return plugin.NextOrFailure(c.Name(), c.Next, ctx, crr, r)
 	}
@@ -97,7 +103,7 @@ func (c *Cache) get(now time.Time, state request.Request, server string) (*item,
 }
 
 // getIgnoreTTL unconditionally returns an item if it exists in the cache.
-func (c *Cache) getIgnoreTTL(now time.Time, state request.Request, server string) *item {
+func (c *Cache) getIgnoreTTL(now time.Time, state request.Request, server string) (*item, *storage.StorageHash) {
 	k := c.pcache.Hash(state.Name(), state.QType(), state.Do())
 
 	if i, ok := c.ncache.Get(k); ok {
@@ -105,17 +111,26 @@ func (c *Cache) getIgnoreTTL(now time.Time, state request.Request, server string
 		if ttl > 0 || (c.staleUpTo > 0 && -ttl < int(c.staleUpTo.Seconds())) {
 			cacheHits.WithLabelValues(server, Denial).Inc()
 		}
-		return i.(*item)
+		return i.(*item), k
 	}
 	if i, ok := c.pcache.Get(k); ok {
 		ttl := i.(*item).ttl(now)
 		if ttl > 0 || (c.staleUpTo > 0 && -ttl < int(c.staleUpTo.Seconds())) {
 			cacheHits.WithLabelValues(server, Success).Inc()
 		}
-		return i.(*item)
+		return i.(*item), k
 	}
 	cacheMisses.WithLabelValues(server).Inc()
-	return nil
+	return nil, k
+}
+
+func (c *Cache) remove(k *storage.StorageHash) {
+	if ret, _ := c.pcache.Get(k); ret == true {
+		c.pcache.Remove(k)
+	}
+	if ret, _ := c.ncache.Get(k); ret == true {
+		c.ncache.Remove(k)
+	}
 }
 
 func (c *Cache) exists(state request.Request) *item {
