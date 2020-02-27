@@ -16,12 +16,14 @@ package storage
 
 import (
 	"hash/fnv"
+	"sync/atomic"
 
 	"github.com/dgraph-io/ristretto"
 )
 
 type storageRistretto struct {
 	cache *ristretto.Cache
+	size  int64
 }
 
 // NewStorageRistretto creates a new Ristretto cache
@@ -29,11 +31,13 @@ func NewStorageRistretto(size int) Storage {
 	storage := new(storageRistretto)
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters: int64(10 * size), // suggestion is 10x max stored items
-		MaxCost:     int64(size),      // maximum cost - using cost 1 per item
-		BufferItems: 64,               // number of keys per Get buffer
-		Metrics:     false,            // enable metrics as they are needed for tests
-		KeyToHash:   keyToHash,
+		NumCounters: int64(10 * size),           // suggestion is 10x max stored items
+		MaxCost:     int64(size),                // maximum cost - using cost 1 per item
+		BufferItems: 64,                         // number of keys per Get buffer
+		Metrics:     false,                      // enable metrics as they are needed for tests
+		KeyToHash:   storage.ristrettoKeyToHash, // replace default hash with FNV since it's faster
+		Cost:        storage.ristrettoCost,      // track when items are stored
+		OnEvict:     storage.ristrettoOnEvict,   // track when items are evicted
 	})
 
 	if err != nil {
@@ -45,7 +49,8 @@ func NewStorageRistretto(size int) Storage {
 	return storage
 }
 
-func keyToHash(key interface{}) (uint64, uint64) {
+// Override default hash with FNV as it is faster
+func (s storageRistretto) ristrettoKeyToHash(key interface{}) (uint64, uint64) {
 	if key == nil {
 		return 0, 0
 	}
@@ -56,6 +61,19 @@ func keyToHash(key interface{}) (uint64, uint64) {
 		panic("Key type not supported")
 	}
 	return 0, 0
+}
+
+// Decrement storage cost by 1
+// Called only on evict
+func (s storageRistretto) ristrettoOnEvict(key, conflict uint64, value interface{}, cost int64) {
+	atomic.AddInt64(&s.size, -1)
+}
+
+// Increment storage cost by 1
+// Called only on set / store
+func (s storageRistretto) ristrettoCost(value interface{}) int64 {
+	atomic.AddInt64(&s.size, 1)
+	return 1
 }
 
 // Hash key parameters using FNV to uint64
@@ -83,7 +101,7 @@ func (s storageRistretto) Hash(qname string, qtype uint16, do bool) *StorageHash
 
 // Add an item to the cache
 func (s storageRistretto) Add(key *StorageHash, el interface{}) {
-	s.cache.Set(key, el, 1)
+	s.cache.Set(key, el, 0)
 }
 
 // Attempt to get an item from the cache
@@ -92,9 +110,10 @@ func (s storageRistretto) Get(key *StorageHash) (interface{}, bool) {
 }
 
 // Retrieve the current cache storage usage
+// Note: this will be a lagging indicator
+// It will only update when items are admitted into the cache
 func (s storageRistretto) Len() int {
-	return int(s.cache.Metrics.CostAdded())
-	//return int(s.cache.Metrics.KeysAdded())
+	return int(atomic.LoadInt64(&s.size))
 }
 
 // Remove an item from the cache
