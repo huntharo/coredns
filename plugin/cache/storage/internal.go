@@ -17,9 +17,6 @@ func NewStorageInternal(size int) Storage {
 	return storage
 }
 
-var one = []byte("1")
-var zero = []byte("0")
-
 // Hash key parameters using FNV to uint64
 func (s storageInternal) Hash(qname string, qtype uint16, do bool) *StorageHash {
 	h := fnv.New64()

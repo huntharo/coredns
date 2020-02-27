@@ -15,7 +15,7 @@
 package storage
 
 import (
-	"fmt"
+	"hash/fnv"
 
 	"github.com/dgraph-io/ristretto"
 )
@@ -33,6 +33,7 @@ func NewStorageRistretto(size int) Storage {
 		MaxCost:     int64(size),      // maximum cost - using cost 1 per item
 		BufferItems: 64,               // number of keys per Get buffer
 		Metrics:     false,            // enable metrics as they are needed for tests
+		KeyToHash:   keyToHash,
 	})
 
 	if err != nil {
@@ -44,30 +45,50 @@ func NewStorageRistretto(size int) Storage {
 	return storage
 }
 
-// Construct a hash string (do not actually hash)
-func (s storageRistretto) Hash(qname string, qtype uint16, do bool) *StorageHash {
-	doI := 0
-	if do {
-		doI = 1
+func keyToHash(key interface{}) (uint64, uint64) {
+	if key == nil {
+		return 0, 0
 	}
+	switch k := key.(type) {
+	case *StorageHash:
+		return k.uhash, 0
+	default:
+		panic("Key type not supported")
+	}
+	return 0, 0
+}
+
+// Hash key parameters using FNV to uint64
+func (s storageRistretto) Hash(qname string, qtype uint16, do bool) *StorageHash {
+	h := fnv.New64()
+
+	if do {
+		h.Write(one)
+	} else {
+		h.Write(zero)
+	}
+
+	h.Write([]byte{byte(qtype >> 8)})
+	h.Write([]byte{byte(qtype)})
+	h.Write([]byte(qname))
 
 	storageHash := new(StorageHash)
 	storageHash.qname = qname
 	storageHash.qtype = qtype
 	storageHash.do = do
-	storageHash.uhash = 0
-	storageHash.strhash = fmt.Sprintf("%s-%d-%d", qname, qtype, doI)
+	storageHash.uhash = h.Sum64()
+
 	return storageHash
 }
 
 // Add an item to the cache
 func (s storageRistretto) Add(key *StorageHash, el interface{}) {
-	s.cache.Set(key.strhash, el, 1)
+	s.cache.Set(key, el, 1)
 }
 
 // Attempt to get an item from the cache
 func (s storageRistretto) Get(key *StorageHash) (interface{}, bool) {
-	return s.cache.Get(key.strhash)
+	return s.cache.Get(key)
 }
 
 // Retrieve the current cache storage usage
@@ -78,5 +99,5 @@ func (s storageRistretto) Len() int {
 
 // Remove an item from the cache
 func (s storageRistretto) Remove(key *StorageHash) {
-	s.cache.Del(key.strhash)
+	s.cache.Del(key)
 }

@@ -9,13 +9,15 @@ type Storage interface {
 	Remove(key *StorageHash)
 }
 
+var one = []byte("1")
+var zero = []byte("0")
+
 // StorageHash contains the inputs to the hash and the string or uint64 hash
 // This allows different cache implementations to have different cache implementations
 // It will also allow a cache to store the input parameters for detection of collisions on reads
 type StorageHash struct {
-	qname   string
-	qtype   uint16
-	do      bool
-	uhash   uint64
-	strhash string
+	qname string
+	qtype uint16
+	do    bool
+	uhash uint64
 }
