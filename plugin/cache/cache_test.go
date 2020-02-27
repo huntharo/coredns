@@ -447,8 +447,13 @@ func benchmarkParallelInserts(b *testing.B, c *Cache) {
 		// Startup the goroutines in parallel
 		go func(p int) {
 			defer close(r[p])
+
+			// Create a new random number generator for this routine
+			source := rand.NewSource(time.Now().UnixNano() * int64(p))
+			generator := rand.New(source)
+
 			for i := 0; i < b.N/parallelRoutines; i++ {
-				req := reqs[rand.Intn(uniqueReqCount)]
+				req := reqs[generator.Intn(uniqueReqCount)]
 				c.ServeDNS(ctx, &test.ResponseWriter{}, req)
 			}
 			// Just write the parallel number (we don't care)
@@ -519,8 +524,13 @@ func benchmarkParallelInsertsRead(b *testing.B, c *Cache) {
 		// Startup the goroutines in parallel
 		go func(p int) {
 			defer close(r[p])
+
+			// Create a new random number generator for this routine
+			source := rand.NewSource(time.Now().UnixNano() * int64(p))
+			generator := rand.New(source)
+
 			for i := 0; i < b.N/parallelRoutines; i++ {
-				req := reqs[rand.Intn(uniqueReqCount)]
+				req := reqs[generator.Intn(uniqueReqCount)]
 				c.ServeDNS(ctx, &test.ResponseWriter{}, req)
 				//time.Sleep(time.Duration(5) * time.Millisecond)
 			}
