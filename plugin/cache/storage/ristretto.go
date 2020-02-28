@@ -44,8 +44,8 @@ func NewStorageRistretto(size int) Storage {
 		BufferItems: 64,                         // number of keys per Get buffer
 		Metrics:     true,                       // enable metrics as they are needed for tests
 		KeyToHash:   storage.ristrettoKeyToHash, // replace default hash with FNV since it's faster
-		Cost:        storage.ristrettoCost,      // track when items are stored
-		OnEvict:     storage.ristrettoOnEvict,   // track when items are evicted
+		//Cost:        storage.ristrettoCost,      // track when items are stored
+		//OnEvict:     storage.ristrettoOnEvict,   // track when items are evicted
 	})
 
 	if err != nil {
@@ -109,7 +109,7 @@ func (s storageRistretto) Hash(qname string, qtype uint16, do bool) *StorageHash
 
 // Add an item to the cache
 func (s storageRistretto) Add(key *StorageHash, el interface{}) {
-	s.cache.Set(key, el, 0)
+	s.cache.Set(key, el, 1)
 }
 
 // Attempt to get an item from the cache
@@ -121,12 +121,16 @@ func (s storageRistretto) Get(key *StorageHash) (interface{}, bool) {
 // Note: this will be a lagging indicator
 // It will only update when items are admitted into the cache
 func (s storageRistretto) Len() int {
-	//return int(s.cache.Metrics.CostAdded())
-	return int(atomic.LoadInt64(s.approxLength))
+	return int(s.cache.Metrics.CostAdded() - s.cache.Metrics.CostEvicted())
+	//return int(atomic.LoadInt64(s.approxLength))
 }
 
 // Remove an item from the cache
 func (s storageRistretto) Remove(key *StorageHash) {
 	s.cache.Del(key)
-	atomic.AddInt64(s.approxLength, -1)
+	//atomic.AddInt64(s.approxLength, -1)
+}
+
+func (s storageRistretto) Stop() {
+	s.cache.Close()
 }

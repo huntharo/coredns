@@ -7,6 +7,7 @@ type Storage interface {
 	Get(key *StorageHash) (interface{}, bool)
 	Len() int
 	Remove(key *StorageHash)
+	Stop()
 }
 
 var one = []byte("1")

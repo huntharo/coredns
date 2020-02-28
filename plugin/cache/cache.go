@@ -44,6 +44,13 @@ type Cache struct {
 	now func() time.Time
 }
 
+// Cleanup goroutines
+func (c *Cache) OnShutdown() error {
+	c.ncache.Stop()
+	c.pcache.Stop()
+	return nil
+}
+
 // New returns an initialized Cache with default settings. It's up to the
 // caller to set the Next handler.
 func New() *Cache {

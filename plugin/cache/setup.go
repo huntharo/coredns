@@ -36,6 +36,10 @@ func setup(c *caddy.Controller) error {
 		return nil
 	})
 
+	c.OnShutdown(func() error {
+		return ca.OnShutdown()
+	})
+
 	return nil
 }
 

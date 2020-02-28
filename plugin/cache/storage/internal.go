@@ -60,3 +60,7 @@ func (s storageInternal) Len() int {
 func (s storageInternal) Remove(key *StorageHash) {
 	s.cache.Remove(key.uhash)
 }
+
+func (s storageInternal) Stop() {
+	// NO-OP
+}
