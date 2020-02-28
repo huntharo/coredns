@@ -15,7 +15,7 @@ type MetricsManager struct {
 
 func newMetricsManager(server string, c *Cache) *MetricsManager {
 	m := &MetricsManager{
-		interval: defaultInterval,
+		interval: c.metricsInterval,
 		server:   server,
 		c:        c,
 		stop:     make(chan bool),
@@ -49,7 +49,3 @@ func (m *MetricsManager) Start() { go m.metricsManager() }
 
 // Stop stops the metrics updater.
 func (m *MetricsManager) Stop() { close(m.stop) }
-
-const (
-	defaultInterval = time.Duration(10) * time.Second
-)

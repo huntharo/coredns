@@ -153,7 +153,9 @@ google.com:0 {
 	forward . 8.8.8.8:53 {
        force_tcp
     }
-	cache
+	cache {
+		metrics_interval 10ms
+	}
 }
 `, addrMetrics, addrMetrics)
 
@@ -170,6 +172,9 @@ google.com:0 {
 		t.Fatalf("Could not send message: %s", err)
 	}
 
+	// wait for cache size metrics to update
+	time.Sleep(time.Duration(10) * time.Millisecond)
+
 	beginCacheSize := test.ScrapeMetricAsInt(addrMetrics, cacheSizeMetricName, "", 0)
 
 	// send an query, different from initial to ensure we have another add to the cache
@@ -179,6 +184,9 @@ google.com:0 {
 	if _, err = dns.Exchange(m, udp); err != nil {
 		t.Fatalf("Could not send message: %s", err)
 	}
+
+	// wait for cache size metrics to update
+	time.Sleep(time.Duration(10) * time.Millisecond)
 
 	endCacheSize := test.ScrapeMetricAsInt(addrMetrics, cacheSizeMetricName, "", 0)
 	if err != nil {

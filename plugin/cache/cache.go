@@ -38,7 +38,8 @@ type Cache struct {
 
 	staleUpTo time.Duration
 
-	mMgr *MetricsManager
+	mMgr            *MetricsManager
+	metricsInterval time.Duration
 
 	// Testing.
 	now func() time.Time
@@ -48,19 +49,20 @@ type Cache struct {
 // caller to set the Next handler.
 func New() *Cache {
 	return &Cache{
-		Zones:      []string{"."},
-		pcap:       defaultCap,
-		pcache:     cache.New(defaultCap),
-		pttl:       maxTTL,
-		minpttl:    minTTL,
-		ncap:       defaultCap,
-		ncache:     cache.New(defaultCap),
-		nttl:       maxNTTL,
-		minnttl:    minNTTL,
-		prefetch:   0,
-		duration:   1 * time.Minute,
-		percentage: 10,
-		now:        time.Now,
+		Zones:           []string{"."},
+		pcap:            defaultCap,
+		pcache:          cache.New(defaultCap),
+		pttl:            maxTTL,
+		minpttl:         minTTL,
+		ncap:            defaultCap,
+		ncache:          cache.New(defaultCap),
+		nttl:            maxNTTL,
+		minnttl:         minNTTL,
+		prefetch:        0,
+		duration:        1 * time.Minute,
+		percentage:      10,
+		metricsInterval: defaultMetricsInterval,
+		now:             time.Now,
 	}
 }
 
@@ -244,4 +246,8 @@ const (
 	Success = "success"
 	// Denial is the class defined for negative caching.
 	Denial = "denial"
+)
+
+const (
+	defaultMetricsInterval = time.Duration(10) * time.Second
 )

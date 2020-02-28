@@ -48,6 +48,9 @@ func TestSetup(t *testing.T) {
 		{`cache	{
 				prefetch 10
 			}`, false, defaultCap, defaultCap, maxNTTL, minNTTL, maxTTL, minTTL, 10},
+		{`cache	{
+				metrics_interval 1s
+			}`, false, defaultCap, defaultCap, maxNTTL, minNTTL, maxTTL, minTTL, 0},
 
 		// fails
 		{`cache example.nl {

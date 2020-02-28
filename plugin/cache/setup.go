@@ -204,6 +204,21 @@ func cacheParse(c *caddy.Controller) (*Cache, error) {
 					}
 					ca.staleUpTo = d
 				}
+
+			case "metrics_interval":
+				args := c.RemainingArgs()
+				if len(args) != 1 {
+					return nil, c.ArgErr()
+				}
+				d, err := time.ParseDuration(args[0])
+				if err != nil {
+					return nil, err
+				}
+				if d < 0 {
+					return nil, errors.New("invalid negative duration for metrics_interval")
+				}
+				ca.metricsInterval = d
+
 			default:
 				return nil, c.ArgErr()
 			}
