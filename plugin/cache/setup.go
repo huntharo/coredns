@@ -33,6 +33,17 @@ func setup(c *caddy.Controller) error {
 		metrics.MustRegister(c,
 			cacheSize, cacheHits, cacheMisses,
 			cachePrefetches, cacheDrops, servedStale)
+
+		// Create the metrics manager to periodically update
+		// expensive metrics
+		ca.mMgr = newMetricsManager(c.Key, ca)
+		ca.mMgr.Start()
+
+		return nil
+	})
+
+	c.OnShutdown(func() error {
+		ca.mMgr.Stop()
 		return nil
 	})
 
