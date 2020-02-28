@@ -35,6 +35,7 @@ cache [TTL] [ZONES...] {
     denial CAPACITY [TTL] [MINTTL]
     prefetch AMOUNT [[DURATION] [PERCENTAGE%]]
     serve_stale [DURATION]
+    ristretto [ttlEvict]
 }
 ~~~
 
@@ -57,7 +58,7 @@ cache [TTL] [ZONES...] {
   stale responses as fresh. The default duration is 1h.
 * `ristretto` will use the `ristretto` cache library instead of the builtin cache library; the builtin cache
   library is the default. The builtin cache evicts randomly and admits all items.  Ristretto evicts by LFU
-  (least frequently used) and only admits new items (when eviction required) that meet required criteria.
+  (least frequently used) and only admits new items (when eviction required) that meet required criteria.  `ttlEvict` can be enabled to evict items either when their TTL expires or when the max stale serve time expires.
 
 ## Capacity and Eviction
 
