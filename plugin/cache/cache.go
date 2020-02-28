@@ -44,7 +44,7 @@ type Cache struct {
 	now func() time.Time
 }
 
-// Cleanup goroutines
+// OnShutdown cleans up goroutines
 func (c *Cache) OnShutdown() error {
 	c.ncache.Stop()
 	c.pcache.Stop()
