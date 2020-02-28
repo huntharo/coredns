@@ -200,12 +200,12 @@ func cacheParse(c *caddy.Controller) (*Cache, error) {
 			case "ristretto":
 				args := c.RemainingArgs()
 				ca.ristretto = true
-				if len(args) == 0 || len(args) != 1 {
+				if len(args) != 0 && len(args) != 1 {
 					return nil, c.ArgErr()
 				}
-				if args[0] == "ttlEvict" {
+				if len(args) == 1 && args[0] == "ttlEvict" {
 					ca.ristrettoTTLEvict = true
-				} else {
+				} else if len(args) != 0 {
 					return nil, c.ArgErr()
 				}
 			default:
