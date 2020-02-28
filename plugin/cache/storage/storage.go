@@ -1,9 +1,11 @@
 package storage
 
+import "time"
+
 // Storage is an interface that provides normalized access to many cache implementations
 type Storage interface {
 	Hash(qname string, qtype uint16, do bool) *StorageHash
-	Add(key *StorageHash, el interface{})
+	Add(key *StorageHash, el interface{}, ttl time.Duration)
 	Get(key *StorageHash) (interface{}, bool)
 	Len() int
 	Remove(key *StorageHash)

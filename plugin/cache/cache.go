@@ -38,7 +38,8 @@ type Cache struct {
 	staleUpTo time.Duration
 
 	// Use Ristretto backend.
-	ristretto bool
+	ristretto         bool
+	ristrettoTTLEvict bool
 
 	// Testing.
 	now func() time.Time
@@ -55,20 +56,21 @@ func (c *Cache) OnShutdown() error {
 // caller to set the Next handler.
 func New() *Cache {
 	return &Cache{
-		Zones:      []string{"."},
-		pcap:       defaultCap,
-		pcache:     storage.NewStorageInternal(defaultCap),
-		pttl:       maxTTL,
-		minpttl:    minTTL,
-		ncap:       defaultCap,
-		ncache:     storage.NewStorageInternal(defaultCap),
-		nttl:       maxNTTL,
-		minnttl:    minNTTL,
-		prefetch:   0,
-		duration:   1 * time.Minute,
-		percentage: 10,
-		ristretto:  false,
-		now:        time.Now,
+		Zones:             []string{"."},
+		pcap:              defaultCap,
+		pcache:            storage.NewStorageInternal(defaultCap),
+		pttl:              maxTTL,
+		minpttl:           minTTL,
+		ncap:              defaultCap,
+		ncache:            storage.NewStorageInternal(defaultCap),
+		nttl:              maxNTTL,
+		minnttl:           minNTTL,
+		prefetch:          0,
+		duration:          1 * time.Minute,
+		percentage:        10,
+		ristretto:         false,
+		ristrettoTTLEvict: false,
+		now:               time.Now,
 	}
 }
 
@@ -198,14 +200,18 @@ func (w *ResponseWriter) WriteMsg(res *dns.Msg) error {
 func (w *ResponseWriter) set(m *dns.Msg, key *storage.StorageHash, mt response.Type, duration time.Duration) {
 	// duration is expected > 0
 	// and key is valid
+	ttlEvictDuration := duration
+	if w.staleUpTo > 0 && w.staleUpTo > duration {
+		ttlEvictDuration = w.staleUpTo
+	}
 	switch mt {
 	case response.NoError, response.Delegation:
 		i := newItem(m, w.now(), duration)
-		w.pcache.Add(key, i)
+		w.pcache.Add(key, i, ttlEvictDuration)
 
 	case response.NameError, response.NoData, response.ServerError:
 		i := newItem(m, w.now(), duration)
-		w.ncache.Add(key, i)
+		w.ncache.Add(key, i, ttlEvictDuration)
 
 	case response.OtherError:
 		// don't cache these

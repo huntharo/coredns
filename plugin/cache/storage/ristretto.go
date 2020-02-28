@@ -16,27 +16,21 @@ package storage
 
 import (
 	"hash/fnv"
-	"sync/atomic"
+	"time"
 
 	"github.com/dgraph-io/ristretto"
 )
 
 type storageRistretto struct {
-	// Note: the int64 for atomic must be 8 byte aligned
-	// We achieve that by allocating it with new(int64)
-	// https://go101.org/article/concurrent-atomic-operation.html
-	// "Please note, up to now (Go 1.14), atomic operations for 64-bit words,
-	// a.k.a., int64 and uint64 values, require the 64-bit words must be 8-byte
-	// aligned in memory."
-	approxLength *int64
-	cache        *ristretto.Cache
+	cache       *ristretto.Cache
+	ttlEviction bool
 }
 
 // NewStorageRistretto creates a new Ristretto cache
-func NewStorageRistretto(size int) Storage {
+func NewStorageRistretto(size int, ttlEviction bool) Storage {
 	storage := new(storageRistretto)
 
-	storage.approxLength = new(int64)
+	storage.ttlEviction = ttlEviction
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters: int64(10 * size),           // suggestion is 10x max stored items
@@ -44,8 +38,6 @@ func NewStorageRistretto(size int) Storage {
 		BufferItems: 64,                         // number of keys per Get buffer
 		Metrics:     true,                       // enable metrics as they are needed for tests
 		KeyToHash:   storage.ristrettoKeyToHash, // replace default hash with FNV since it's faster
-		//Cost:        storage.ristrettoCost,      // track when items are stored
-		//OnEvict:     storage.ristrettoOnEvict,   // track when items are evicted
 	})
 
 	if err != nil {
@@ -69,19 +61,6 @@ func (s storageRistretto) ristrettoKeyToHash(key interface{}) (uint64, uint64) {
 		panic("Key type not supported")
 	}
 	return 0, 0
-}
-
-// Decrement storage cost by 1
-// Called only on evict
-func (s storageRistretto) ristrettoOnEvict(key, conflict uint64, value interface{}, cost int64) {
-	atomic.AddInt64(s.approxLength, -1)
-}
-
-// Increment storage cost by 1
-// Called only on set / store
-func (s storageRistretto) ristrettoCost(value interface{}) int64 {
-	atomic.AddInt64(s.approxLength, 1)
-	return 1
 }
 
 // Hash key parameters using FNV to uint64
@@ -108,8 +87,14 @@ func (s storageRistretto) Hash(qname string, qtype uint16, do bool) *StorageHash
 }
 
 // Add an item to the cache
-func (s storageRistretto) Add(key *StorageHash, el interface{}) {
-	s.cache.Set(key, el, 1)
+func (s storageRistretto) Add(key *StorageHash, el interface{}, ttl time.Duration) {
+	if s.ttlEviction && ttl > 0 {
+		// Add with ttl specified by caller
+		s.cache.SetWithTTL(key, el, 1, ttl)
+	} else {
+		// Add without ttl (never evict on ttl)
+		s.cache.Set(key, el, 1)
+	}
 }
 
 // Attempt to get an item from the cache
@@ -122,13 +107,11 @@ func (s storageRistretto) Get(key *StorageHash) (interface{}, bool) {
 // It will only update when items are admitted into the cache
 func (s storageRistretto) Len() int {
 	return int(s.cache.Metrics.CostAdded() - s.cache.Metrics.CostEvicted())
-	//return int(atomic.LoadInt64(s.approxLength))
 }
 
 // Remove an item from the cache
 func (s storageRistretto) Remove(key *StorageHash) {
 	s.cache.Del(key)
-	//atomic.AddInt64(s.approxLength, -1)
 }
 
 func (s storageRistretto) Stop() {

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"hash/fnv"
+	"time"
 
 	"github.com/coredns/coredns/plugin/pkg/cache"
 )
@@ -42,7 +43,7 @@ func (s storageInternal) Hash(qname string, qtype uint16, do bool) *StorageHash 
 }
 
 // Add an item to the cache
-func (s storageInternal) Add(key *StorageHash, el interface{}) {
+func (s storageInternal) Add(key *StorageHash, el interface{}, ttl time.Duration) {
 	s.cache.Add(key.uhash, el)
 }
 

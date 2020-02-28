@@ -188,8 +188,8 @@ func newTestCacheOnly(cacheType string, cap int) *Cache {
 	// Overwrite the default buitin cache objects
 	if cacheType == "ristretto" {
 		c.ristretto = true
-		c.pcache = storage.NewStorageRistretto(c.pcap)
-		c.ncache = storage.NewStorageRistretto(c.ncap)
+		c.pcache = storage.NewStorageRistretto(c.pcap, false)
+		c.ncache = storage.NewStorageRistretto(c.ncap, false)
 	}
 
 	return c
@@ -203,8 +203,8 @@ func newTestCache(ttl time.Duration, cacheType string) (*Cache, *ResponseWriter)
 	// Overwrite the default buitin cache objects
 	if cacheType == "ristretto" {
 		c.ristretto = true
-		c.pcache = storage.NewStorageRistretto(c.pcap)
-		c.ncache = storage.NewStorageRistretto(c.ncap)
+		c.pcache = storage.NewStorageRistretto(c.pcap, false)
+		c.ncache = storage.NewStorageRistretto(c.ncap, false)
 	}
 
 	crr := &ResponseWriter{ResponseWriter: nil, Cache: c}

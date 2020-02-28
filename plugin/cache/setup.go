@@ -198,7 +198,16 @@ func cacheParse(c *caddy.Controller) (*Cache, error) {
 					ca.staleUpTo = d
 				}
 			case "ristretto":
+				args := c.RemainingArgs()
 				ca.ristretto = true
+				if len(args) == 0 || len(args) != 1 {
+					return nil, c.ArgErr()
+				}
+				if args[0] == "ttlEvict" {
+					ca.ristrettoTTLEvict = true
+				} else {
+					return nil, c.ArgErr()
+				}
 			default:
 				return nil, c.ArgErr()
 			}
@@ -210,8 +219,8 @@ func cacheParse(c *caddy.Controller) (*Cache, error) {
 		ca.Zones = origins
 
 		if ca.ristretto {
-			ca.pcache = storage.NewStorageRistretto(ca.pcap)
-			ca.ncache = storage.NewStorageRistretto(ca.ncap)
+			ca.pcache = storage.NewStorageRistretto(ca.pcap, ca.ristrettoTTLEvict)
+			ca.ncache = storage.NewStorageRistretto(ca.ncap, ca.ristrettoTTLEvict)
 		} else {
 			ca.pcache = storage.NewStorageInternal(ca.pcap)
 			ca.ncache = storage.NewStorageInternal(ca.ncap)
